@@ -4,6 +4,7 @@ pub mod crossover;
 pub mod first_run;
 pub mod grid;
 pub mod history;
+pub mod import;
 pub mod key;
 pub mod load;
 pub mod mix;
