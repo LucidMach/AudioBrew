@@ -40,6 +40,21 @@ pub fn compatibility(reference: Key, other: Key) -> Compatibility {
     }
 }
 
+/// Pitch class (0 = C) of the major key sharing this Key's notes; a Camelot step is a fifth.
+fn major_pitch_class(key: Key) -> u8 {
+    (key.number * 7 + 4) % 12
+}
+
+/// Semitones (-5 to +6) to pitch-shift `other` so it fits `reference`, taking the shorter
+/// way round. Relative major/minor share notes, so they need no shift. A tie at 6 is +6.
+pub fn match_key_shift(reference: Key, other: Key) -> Option<i8> {
+    if !reference.is_valid() || !other.is_valid() {
+        return None;
+    }
+    let up = (major_pitch_class(reference) + 12 - major_pitch_class(other)) % 12;
+    Some(if up > 6 { up as i8 - 12 } else { up as i8 })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -145,5 +160,49 @@ mod tests {
             compatibility(key(8, true), key(6, true)),
             Compatibility::Amber
         );
+    }
+
+    #[test]
+    fn matching_8a_to_a_reference_of_10a_shifts_up_two_semitones() {
+        // 8A is A minor, 10A is B minor: A up to B is +2.
+        assert_eq!(match_key_shift(key(10, true), key(8, true)), Some(2));
+        assert_eq!(match_key_shift(key(8, true), key(10, true)), Some(-2));
+    }
+
+    #[test]
+    fn a_neighbour_on_the_wheel_is_five_semitones_away_not_one() {
+        // 12A is C# minor, 1A is G# minor: a fifth apart, so the short way is -5.
+        assert_eq!(match_key_shift(key(1, true), key(12, true)), Some(-5));
+        assert_eq!(match_key_shift(key(12, true), key(1, true)), Some(5));
+    }
+
+    #[test]
+    fn relative_major_and_minor_need_no_shift() {
+        // 8A (A minor) and 8B (C major) share notes.
+        assert_eq!(match_key_shift(key(8, true), key(8, false)), Some(0));
+        assert_eq!(match_key_shift(key(8, false), key(8, true)), Some(0));
+    }
+
+    #[test]
+    fn a_tritone_apart_is_a_shift_of_plus_six() {
+        // 2A (D#m... pitch class 3) vs 8A (A minor, pitch class 9): exactly 6 either way; pinned to +6.
+        assert_eq!(match_key_shift(key(2, true), key(8, true)), Some(6));
+        assert_eq!(match_key_shift(key(8, true), key(2, true)), Some(6));
+    }
+
+    #[test]
+    fn a_key_off_the_wheel_has_no_shift() {
+        assert_eq!(match_key_shift(key(0, true), key(8, true)), None);
+        assert_eq!(match_key_shift(key(8, true), key(13, false)), None);
+    }
+
+    #[test]
+    fn every_shift_is_within_six_semitones() {
+        for a in 1..=12 {
+            for b in 1..=12 {
+                let shift = match_key_shift(key(a, true), key(b, false)).unwrap();
+                assert!((-5..=6).contains(&shift), "{a} vs {b}: {shift}");
+            }
+        }
     }
 }
