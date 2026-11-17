@@ -44,6 +44,7 @@ fn track(path: &Path, bpm: f64, length_secs: f64) -> LoadedTrack {
         key: None,
         length_secs,
         offset_beats: 0.0,
+        ..Default::default()
     }
 }
 

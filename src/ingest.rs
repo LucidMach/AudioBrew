@@ -26,6 +26,7 @@ pub fn analyze_source(
             key: None,
             length_secs: found.length_secs,
             offset_beats: 0.0,
+            ..Default::default()
         },
         downbeat_secs: found.downbeat_secs,
     })

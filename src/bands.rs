@@ -5,6 +5,7 @@ pub const MAX_BANDS: usize = 6;
 
 /// A Track's Bands: contiguous frequency ranges separated by crossover points,
 /// so Bands can never overlap or leave gaps.
+#[derive(Debug, Clone, PartialEq)]
 pub struct BandConfig {
     crossovers: Vec<f64>,
 }
@@ -13,6 +14,10 @@ pub struct BandConfig {
 pub enum BandError {
     TooManyBands,
     InvalidCrossover,
+    /// There is no Band with that index.
+    NoSuchBand,
+    /// A Track always keeps at least one Band.
+    LastBand,
 }
 
 impl Default for BandConfig {
@@ -53,6 +58,25 @@ impl BandConfig {
             return Err(BandError::InvalidCrossover);
         }
         self.crossovers[index] = hz;
+        Ok(())
+    }
+
+    /// Index of the Band containing `hz`. A frequency exactly on a boundary belongs to the
+    /// Band above it.
+    pub fn band_containing(&self, hz: f64) -> usize {
+        self.crossovers.partition_point(|&c| c <= hz)
+    }
+
+    /// Removes Band `index`; its range is absorbed by the Band below it, or by the one above
+    /// when it is the lowest. The last remaining Band cannot be removed.
+    pub fn remove_band(&mut self, index: usize) -> Result<(), BandError> {
+        if index > self.crossovers.len() {
+            return Err(BandError::NoSuchBand);
+        }
+        if self.crossovers.is_empty() {
+            return Err(BandError::LastBand);
+        }
+        self.crossovers.remove(index.saturating_sub(1));
         Ok(())
     }
 
@@ -194,5 +218,66 @@ mod tests {
         let before = bands.ranges();
         assert_eq!(bands.move_crossover(0, 300.0), Ok(()));
         assert_eq!(bands.ranges(), before);
+    }
+
+    #[test]
+    fn a_band_config_can_be_cloned_and_compared() {
+        let a = BandConfig::default();
+        let mut b = a.clone();
+        assert_eq!(a, b);
+        b.add_band(1_000.0).unwrap();
+        assert_ne!(a, b);
+    }
+
+    #[test]
+    fn removing_the_middle_band_is_absorbed_by_the_band_below_it() {
+        let mut bands = BandConfig::default(); // 20-300, 300-4000, 4000-20000
+        bands.remove_band(1).unwrap();
+        assert_eq!(bands.ranges(), vec![(20.0, 4_000.0), (4_000.0, 20_000.0)]);
+    }
+
+    #[test]
+    fn removing_the_lowest_band_is_absorbed_by_the_band_above_it() {
+        let mut bands = BandConfig::default();
+        bands.remove_band(0).unwrap();
+        assert_eq!(bands.ranges(), vec![(20.0, 4_000.0), (4_000.0, 20_000.0)]);
+        assert_eq!(bands.crossovers(), &[4_000.0]);
+    }
+
+    #[test]
+    fn removing_the_highest_band_is_absorbed_by_the_band_below_it() {
+        let mut bands = BandConfig::default();
+        bands.remove_band(2).unwrap();
+        assert_eq!(bands.ranges(), vec![(20.0, 300.0), (300.0, 20_000.0)]);
+    }
+
+    #[test]
+    fn the_last_band_cannot_be_removed_and_a_missing_band_is_an_error() {
+        let mut bands = BandConfig::default();
+        bands.remove_band(0).unwrap();
+        bands.remove_band(0).unwrap();
+        assert_eq!(bands.ranges(), vec![(20.0, 20_000.0)]);
+        assert_eq!(bands.remove_band(0), Err(BandError::LastBand));
+
+        let mut bands = BandConfig::default();
+        assert_eq!(bands.remove_band(3), Err(BandError::NoSuchBand));
+        assert_eq!(bands.ranges().len(), 3);
+    }
+
+    #[test]
+    fn a_removed_band_can_be_added_back() {
+        let mut bands = BandConfig::default();
+        bands.remove_band(2).unwrap();
+        bands.add_band(5_000.0).unwrap();
+        assert_eq!(bands.ranges().len(), 3);
+    }
+
+    #[test]
+    fn the_index_of_the_band_containing_a_frequency() {
+        let bands = BandConfig::default();
+        assert_eq!(bands.band_containing(100.0), 0);
+        assert_eq!(bands.band_containing(300.0), 1); // a boundary belongs to the band above
+        assert_eq!(bands.band_containing(1_000.0), 1);
+        assert_eq!(bands.band_containing(10_000.0), 2);
     }
 }

@@ -180,6 +180,7 @@ fn dragging_an_offset_through_history_is_one_undo_step() {
                 key: None,
                 length_secs: 8.0,
                 offset_beats: 0.0,
+                ..Default::default()
             },
         )
         .unwrap();

@@ -1,5 +1,5 @@
 /// One Band's controls on a Track.
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BandState {
     pub gain: f32,
     pub mute: bool,

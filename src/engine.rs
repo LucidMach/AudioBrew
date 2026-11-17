@@ -33,7 +33,8 @@ pub struct Lane {
 
 impl Lane {
     /// `audio` must already be stretched to the Mashup BPM and at the engine's sample rate.
-    /// `crossovers` define the Bands (at most `MAX_BANDS`, so five crossovers).
+    /// `crossovers` define the Bands (at most `MAX_BANDS`, so five crossovers). Every Band
+    /// starts open at unity gain.
     pub fn new(
         audio: &Stereo,
         crossovers: &[f64],
@@ -41,17 +42,41 @@ impl Lane {
         repeats: bool,
         fader: f32,
     ) -> Result<Box<Lane>, SplitterError> {
+        let open = BandState {
+            gain: 1.0,
+            mute: false,
+            solo: false,
+        };
+        let bands = vec![open; crossovers.len() + 1];
+        Self::with_settings(audio, crossovers, offset, repeats, fader, &bands)
+    }
+
+    /// Like `new`, but each Band starts at the given gain, mute and solo with no ramp, so a
+    /// muted Band is silent from the first frame. `bands` must have one entry per Band.
+    pub fn with_settings(
+        audio: &Stereo,
+        crossovers: &[f64],
+        offset: i64,
+        repeats: bool,
+        fader: f32,
+        bands: &[BandState],
+    ) -> Result<Box<Lane>, SplitterError> {
         if crossovers.len() >= MAX_BANDS {
             return Err(SplitterError::InvalidCrossover);
         }
         let splitter = BandSplitter::new(audio.sample_rate as f64, crossovers)?;
         let count = splitter.band_count();
+        if bands.len() != count {
+            return Err(SplitterError::InvalidCrossover);
+        }
         let frames = audio.frames();
         let (mut left, mut right) = (Vec::with_capacity(frames), Vec::with_capacity(frames));
         for frame in audio.samples.chunks_exact(2) {
             left.push(frame[0]);
             right.push(frame[1]);
         }
+        let mut gains = vec![0.0f32; count];
+        effective_gains_into(bands, &mut gains);
         Ok(Box::new(Lane {
             sample_rate: audio.sample_rate,
             left,
@@ -60,15 +85,8 @@ impl Lane {
             repeats,
             splitter_left: splitter.clone(),
             splitter_right: splitter,
-            bands: vec![
-                BandState {
-                    gain: 1.0,
-                    mute: false,
-                    solo: false
-                };
-                count
-            ],
-            band_gain: vec![Ramp::new(1.0); count],
+            bands: bands.to_vec(),
+            band_gain: gains.into_iter().map(Ramp::new).collect(),
             fader: Ramp::new(if fader.is_finite() {
                 fader.max(0.0)
             } else {
@@ -901,5 +919,66 @@ mod tests {
     fn a_lane_with_unusable_crossovers_is_an_error_not_a_panic() {
         let audio = constant(100, 0.1, 0.1);
         assert!(Lane::new(&audio, &[4_000.0, 300.0], 0, true, 1.0).is_err());
+    }
+
+    #[test]
+    fn a_lane_built_with_settings_starts_at_them_with_no_ramp() {
+        use crate::mix::BandState;
+        let open = BandState {
+            gain: 1.0,
+            mute: false,
+            solo: false,
+        };
+        let muted = BandState { mute: true, ..open };
+        let (mut e, mut h) = engine();
+        send(&mut h, Command::SetEnd(96_000));
+        let track = Lane::with_settings(
+            &tone(1_000.0, 96_000, 0.5),
+            &[300.0, 4_000.0],
+            0,
+            true,
+            0.5,
+            &[open, muted, open],
+        )
+        .unwrap();
+        send(&mut h, Command::LoadLane { lane: 0, track });
+        send(&mut h, Command::Play);
+        // From the very first frame the mid Band is silent: a 20 ms ramp would let it through.
+        let out = left(&run(&mut e, 2_000, 128));
+        assert!(
+            rms(&out) < 0.03 * 0.5 * std::f64::consts::FRAC_1_SQRT_2 * 0.5,
+            "{}",
+            rms(&out)
+        );
+    }
+
+    #[test]
+    fn a_lane_built_with_settings_applies_the_fader_at_once() {
+        use crate::mix::BandState;
+        let open = BandState {
+            gain: 1.0,
+            mute: false,
+            solo: false,
+        };
+        let (mut e, mut h) = engine();
+        send(&mut h, Command::SetEnd(1_000));
+        let track =
+            Lane::with_settings(&constant(1_000, 0.25, 0.25), &[], 0, true, 0.5, &[open]).unwrap();
+        send(&mut h, Command::LoadLane { lane: 0, track });
+        send(&mut h, Command::Play);
+        assert!(run(&mut e, 10, 10).iter().all(|v| *v == 0.125));
+    }
+
+    #[test]
+    fn settings_for_the_wrong_number_of_bands_are_an_error() {
+        use crate::mix::BandState;
+        let open = BandState {
+            gain: 1.0,
+            mute: false,
+            solo: false,
+        };
+        let audio = constant(100, 0.1, 0.1);
+        assert!(Lane::with_settings(&audio, &[300.0], 0, true, 1.0, &[open]).is_err());
+        assert!(Lane::with_settings(&audio, &[], 0, true, 1.0, &[open, open]).is_err());
     }
 }
