@@ -1,6 +1,9 @@
 /// How much faster (>1) or slower (<1) a Track must play to land on the Mashup BPM.
-pub fn speed_factor(track_bpm: f64, mashup_bpm: f64) -> f64 {
-    mashup_bpm / track_bpm
+pub fn speed_factor(track_bpm: f64, mashup_bpm: f64) -> Option<f64> {
+    if track_bpm <= 0.0 || mashup_bpm <= 0.0 {
+        return None;
+    }
+    Some(mashup_bpm / track_bpm)
 }
 
 /// Whether a speed factor is inside the range that still sounds acceptable (0.7x to 1.4x).
@@ -18,13 +21,13 @@ pub enum BpmFix {
 /// Suggests halving or doubling the detected BPM, but only when the current
 /// speed factor is out of limits and the correction brings it back in.
 pub fn suggest_bpm_fix(track_bpm: f64, mashup_bpm: f64) -> Option<BpmFix> {
-    if within_stretch_limits(speed_factor(track_bpm, mashup_bpm)) {
+    if speed_factor(track_bpm, mashup_bpm).is_some_and(within_stretch_limits) {
         return None;
     }
-    if within_stretch_limits(speed_factor(track_bpm * 2.0, mashup_bpm)) {
+    if speed_factor(track_bpm * 2.0, mashup_bpm).is_some_and(within_stretch_limits) {
         return Some(BpmFix::Double);
     }
-    if within_stretch_limits(speed_factor(track_bpm / 2.0, mashup_bpm)) {
+    if speed_factor(track_bpm / 2.0, mashup_bpm).is_some_and(within_stretch_limits) {
         return Some(BpmFix::Half);
     }
     None
@@ -60,7 +63,14 @@ mod tests {
     }
 
     #[test]
+    fn a_tempo_of_zero_or_less_has_no_speed_factor() {
+        assert_eq!(speed_factor(0.0, 120.0), None);
+        assert_eq!(speed_factor(-90.0, 120.0), None);
+        assert_eq!(speed_factor(100.0, 0.0), None);
+    }
+
+    #[test]
     fn a_100_bpm_track_speeds_up_by_1_2_to_match_a_120_bpm_mashup() {
-        assert_eq!(speed_factor(100.0, 120.0), 1.2);
+        assert_eq!(speed_factor(100.0, 120.0), Some(1.2));
     }
 }
