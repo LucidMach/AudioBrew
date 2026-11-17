@@ -14,6 +14,7 @@ pub mod readout;
 pub mod render;
 pub mod rerender;
 pub mod shortcuts;
+pub mod stretch;
 pub mod tempo;
 pub mod theme;
 pub mod timeline;

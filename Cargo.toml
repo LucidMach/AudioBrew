@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 rubato = "5.1.0"
+signalsmith-stretch = "0.1.3"
 symphonia = { version = "0.6.1", features = ["all"] }
 
 [dev-dependencies]
