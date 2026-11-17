@@ -20,9 +20,43 @@ pub fn limit(sample: f32) -> f32 {
     sample.clamp(-1.0, 1.0)
 }
 
+/// One Track's already-processed samples and its fader level.
+pub struct TrackSignal<'a> {
+    pub fader: f32,
+    pub samples: &'a [f32],
+}
+
+/// Sums every Track (after its fader) into the Mashup, then limits the result.
+/// A Track shorter than the longest one is silent past its end.
+pub fn mix_down(tracks: &[TrackSignal]) -> Vec<f32> {
+    let length = tracks.iter().map(|t| t.samples.len()).max().unwrap_or(0);
+    (0..length)
+        .map(|i| {
+            let sum: f32 = tracks
+                .iter()
+                .map(|t| t.samples.get(i).copied().unwrap_or(0.0) * t.fader)
+                .sum();
+            limit(sum)
+        })
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn mashup_is_the_faded_sum_of_the_tracks_then_limited() {
+        let drums = [0.5, 0.5, -0.25];
+        let vocals = [0.75, -0.25, -1.0];
+        let tracks = [
+            TrackSignal { fader: 1.0, samples: &drums },
+            TrackSignal { fader: 0.5, samples: &vocals },
+        ];
+
+        // 0.5 + 0.375 = 0.875 | 0.5 - 0.125 = 0.375 | -0.25 - 0.5 = -0.75
+        assert_eq!(mix_down(&tracks), vec![0.875, 0.375, -0.75]);
+    }
 
     #[test]
     fn the_limiter_keeps_the_sum_within_full_scale() {
