@@ -14,9 +14,30 @@ pub fn mashup_length_secs(tracks: &[Placement]) -> f64 {
         .fold(0.0, f64::max)
 }
 
+/// Times (in Mashup seconds) where a repeating Track starts a new pass,
+/// up to but not including the end marker.
+pub fn repeat_seams_secs(track: Placement, end_marker_secs: f64) -> Vec<f64> {
+    if track.length_secs <= 0.0 {
+        return Vec::new();
+    }
+    (1..)
+        .map(|pass| track.offset_secs + pass as f64 * track.length_secs)
+        .take_while(|&seam| seam < end_marker_secs)
+        .collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn repeating_track_starts_a_new_pass_every_length_until_the_end_marker() {
+        // A 4s drum loop at offset 0 under a Mashup that ends at 10s
+        // plays 2.5 times: new passes begin at 4s and 8s.
+        let drums = Placement { length_secs: 4.0, offset_secs: 0.0 };
+
+        assert_eq!(repeat_seams_secs(drums, 10.0), vec![4.0, 8.0]);
+    }
 
     #[test]
     fn mashup_ends_where_the_last_offset_track_ends() {

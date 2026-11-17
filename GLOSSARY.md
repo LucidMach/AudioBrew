@@ -40,6 +40,10 @@ _Avoid_: Delay, shift
 A beat-grid-snapped span of a Track that repeats to fill the Mashup.
 _Avoid_: Loop, sample
 
+**End marker**:
+The draggable point that sets where the Mashup ends. It defaults to where the longest Track ends, and repeating Tracks repeat until it.
+_Avoid_: Trim point, mashup length
+
 **Playhead**:
 The single shared position across all lanes.
 _Avoid_: Cursor, scrubber
