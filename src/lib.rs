@@ -26,5 +26,6 @@ pub mod stretch;
 pub mod tempo;
 pub mod theme;
 pub mod timeline;
+pub mod timeline_view;
 pub mod transport;
 pub mod waveform;
