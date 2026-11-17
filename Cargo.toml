@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 cpal = "0.18.2"
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
 realfft = "3.5.1"
 rtrb = "0.4.1"
 rubato = "5.1.0"
