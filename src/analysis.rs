@@ -28,12 +28,12 @@ pub fn estimate_tempo(samples: &[f32], sample_rate: u32) -> Option<f64> {
 /// Tempo search range. Anything outside it is folded in by the caller as half/double time.
 const MIN_BPM: f64 = 70.0;
 const MAX_BPM: f64 = 180.0;
-/// Analysis frame size in samples (about 1.5 ms at 44.1 kHz). Fine enough that a beat period
+/// Analysis hop in samples (about 3 ms at 44.1 kHz). Fine enough that a beat period
 /// is not split ambiguously between two lags.
-const HOP: usize = 64;
+const HOP: usize = 128;
 
 /// Half-width, in frames, of each moving-average pass (applied twice: a triangular blur).
-const SMOOTH_RADIUS: usize = 6;
+const SMOOTH_RADIUS: usize = 3;
 
 /// Moving average over `2 * radius + 1` frames, shrinking at the edges.
 fn smooth(envelope: &[f64], radius: usize) -> Vec<f64> {
@@ -52,17 +52,50 @@ fn tempo_prior(bpm: f64) -> f64 {
     (-0.5 * (octaves_from_120 / 3.0).powi(2)).exp()
 }
 
-/// How much new energy arrives in each `hop`-sized block: the half-wave rectified
-/// increase in block energy. Peaks mark drum hits and note starts.
+/// FFT window length in samples (about 46 ms at 44.1 kHz).
+const FFT_SIZE: usize = 2048;
+/// Compression applied to spectrum magnitudes before differencing, so quiet and loud
+/// onsets count more evenly (as the ear hears them).
+const LOG_GAMMA: f32 = 100.0;
+
+/// Spectral flux: for every `hop` samples, how much the log-magnitude spectrum grew in any
+/// frequency bin since the previous frame, summed over bins. Unlike plain energy, a hi-hat
+/// over a steady bass line still registers, because only its own frequencies are compared.
 fn onset_strength(samples: &[f32], hop: usize) -> Vec<f64> {
-    let energy: Vec<f64> = samples
-        .chunks(hop)
-        .map(|block| block.iter().map(|&s| (s as f64) * (s as f64)).sum())
+    use realfft::RealFftPlanner;
+
+    if samples.len() < FFT_SIZE {
+        return Vec::new();
+    }
+    let fft = RealFftPlanner::<f32>::new().plan_fft_forward(FFT_SIZE);
+    let window: Vec<f32> = (0..FFT_SIZE)
+        .map(|i| 0.5 - 0.5 * (std::f32::consts::TAU * i as f32 / FFT_SIZE as f32).cos())
         .collect();
-    energy
-        .windows(2)
-        .map(|pair| (pair[1] - pair[0]).max(0.0))
-        .collect()
+    let window_sum: f32 = window.iter().sum();
+
+    let mut input = vec![0.0f32; FFT_SIZE];
+    let mut spectrum = fft.make_output_vec();
+    let mut previous = vec![0.0f32; spectrum.len()];
+    let mut flux = Vec::with_capacity((samples.len() - FFT_SIZE) / hop + 1);
+
+    for (frame, start) in (0..=samples.len() - FFT_SIZE).step_by(hop).enumerate() {
+        for (i, slot) in input.iter_mut().enumerate() {
+            *slot = samples[start + i] * window[i];
+        }
+        fft.process(&mut input, &mut spectrum)
+            .expect("buffer lengths match the planned FFT");
+
+        let mut growth = 0.0f64;
+        for (bin, value) in spectrum.iter().enumerate() {
+            let level = (1.0 + LOG_GAMMA * value.norm() / window_sum).ln();
+            if frame > 0 {
+                growth += (level - previous[bin]).max(0.0) as f64;
+            }
+            previous[bin] = level;
+        }
+        flux.push(growth);
+    }
+    flux
 }
 
 /// How many whole beats of repetition a candidate beat period must show.

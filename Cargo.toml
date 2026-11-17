@@ -5,6 +5,7 @@ edition = "2024"
 
 [dependencies]
 cpal = "0.18.2"
+realfft = "3.5.1"
 rtrb = "0.4.1"
 rubato = "5.1.0"
 signalsmith-stretch = "0.1.3"

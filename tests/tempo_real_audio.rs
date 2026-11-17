@@ -62,12 +62,12 @@ fn up_to_octave(estimate: f64, truth: f64) -> bool {
         .any(|k| exact(estimate, truth * k))
 }
 
-#[test]
-fn estimator_matches_human_annotated_bpm_on_real_loops() {
+/// Returns `(exact_rate, octave_rate)` over the loops, or `None` if the audio is not present.
+fn score_real_loops() -> Option<(f64, f64)> {
     let loops = manifest();
     if loops.is_empty() || !Path::new(DIR).join(&loops[0].file).exists() {
         eprintln!("skipping: {DIR} audio not present");
-        return;
+        return None;
     }
 
     let (mut exact_hits, mut octave_hits, mut total) = (0, 0, 0);
@@ -95,8 +95,26 @@ fn estimator_matches_human_annotated_bpm_on_real_loops() {
         "exact {exact_hits}/{total} = {exact_rate:.2}, octave {octave_hits}/{total} = {octave_rate:.2}"
     );
     assert!(total >= 30, "expected to read most loops, read {total}");
-    assert!(
-        octave_rate >= 0.8,
-        "tempo within an octave on only {octave_rate:.2} of loops"
-    );
+    Some((exact_rate, octave_rate))
+}
+
+/// Guards the level reached so far (62% exact, 93% allowing half/double time).
+#[test]
+fn estimator_keeps_its_accuracy_on_real_loops() {
+    let Some((exact_rate, octave_rate)) = score_real_loops() else {
+        return;
+    };
+    assert!(exact_rate >= 0.60, "within 4% on only {exact_rate:.2} of loops");
+    assert!(octave_rate >= 0.90, "within an octave on only {octave_rate:.2} of loops");
+}
+
+/// The goal. Remaining misses are mostly half-time readings of fast loops (kick-snare patterns
+/// look identical at the beat and at half the beat), which tuning has not resolved.
+#[test]
+#[ignore = "goal not yet met: 70% within 4%"]
+fn estimator_reaches_70_percent_exact_on_real_loops() {
+    let Some((exact_rate, _)) = score_real_loops() else {
+        return;
+    };
+    assert!(exact_rate >= 0.70, "within 4% on only {exact_rate:.2} of loops");
 }
