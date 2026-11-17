@@ -104,8 +104,14 @@ fn estimator_keeps_its_accuracy_on_real_loops() {
     let Some((exact_rate, octave_rate)) = score_real_loops() else {
         return;
     };
-    assert!(exact_rate >= 0.60, "within 4% on only {exact_rate:.2} of loops");
-    assert!(octave_rate >= 0.90, "within an octave on only {octave_rate:.2} of loops");
+    assert!(
+        exact_rate >= 0.60,
+        "within 4% on only {exact_rate:.2} of loops"
+    );
+    assert!(
+        octave_rate >= 0.90,
+        "within an octave on only {octave_rate:.2} of loops"
+    );
 }
 
 /// The goal. Remaining misses are mostly half-time readings of fast loops (kick-snare patterns
@@ -116,5 +122,73 @@ fn estimator_reaches_70_percent_exact_on_real_loops() {
     let Some((exact_rate, _)) = score_real_loops() else {
         return;
     };
-    assert!(exact_rate >= 0.70, "within 4% on only {exact_rate:.2} of loops");
+    assert!(
+        exact_rate >= 0.70,
+        "within 4% on only {exact_rate:.2} of loops"
+    );
+}
+
+/// Distance from `t` to the nearest multiple of `period`, in seconds.
+fn distance_to_grid(t: f64, period: f64) -> f64 {
+    let r = t.rem_euclid(period);
+    r.min(period - r)
+}
+
+/// "Well cut" loops start on beat 1 of a bar, so on loops whose tempo is found, the first beat
+/// should sit on the grid origin and the downbeat should be on a bar line that starts at 0.
+/// Returns `(beat_rate, downbeat_rate, evaluated)` or `None` if the audio is not present.
+fn score_beat_grid() -> Option<(f64, f64, usize)> {
+    let loops = manifest();
+    if loops.is_empty() || !Path::new(DIR).join(&loops[0].file).exists() {
+        eprintln!("skipping: {DIR} audio not present");
+        return None;
+    }
+    let (mut beat_ok, mut down_ok, mut evaluated) = (0, 0, 0);
+    for l in &loops {
+        let Some((samples, rate)) = read_mono(&Path::new(DIR).join(&l.file)) else {
+            continue;
+        };
+        let Some(beats) = audiobrew::analysis::track_beats(&samples, rate) else {
+            continue;
+        };
+        if !exact(beats.bpm, l.bpm) || beats.times_secs.len() <= beats.downbeat_offset {
+            continue; // only judge the grid where the tempo itself was right
+        }
+        evaluated += 1;
+        let beat = 60.0 / beats.bpm;
+        let first_beat_err = distance_to_grid(beats.times_secs[0], beat);
+        let downbeat_err = distance_to_grid(beats.times_secs[beats.downbeat_offset], 4.0 * beat);
+        let (b, d) = (first_beat_err <= 0.15 * beat, downbeat_err <= 0.15 * beat);
+        beat_ok += b as usize;
+        down_ok += d as usize;
+        eprintln!(
+            "{:>12} bpm {:>6.1}  first beat off {:>5.0} ms  downbeat off {:>5.0} ms  beat={b} down={d}",
+            l.file,
+            beats.bpm,
+            first_beat_err * 1000.0,
+            downbeat_err * 1000.0
+        );
+    }
+    let n = evaluated.max(1) as f64;
+    eprintln!("beat grid {beat_ok}/{evaluated}, downbeat {down_ok}/{evaluated}");
+    Some((beat_ok as f64 / n, down_ok as f64 / n, evaluated))
+}
+
+#[test]
+fn beat_grid_lines_up_with_the_start_of_well_cut_loops() {
+    let Some((beat_rate, downbeat_rate, evaluated)) = score_beat_grid() else {
+        return;
+    };
+    assert!(
+        evaluated >= 15,
+        "only {evaluated} loops had the right tempo to judge"
+    );
+    assert!(
+        beat_rate >= 0.7,
+        "first beat on the grid for only {beat_rate:.2} of loops"
+    );
+    assert!(
+        downbeat_rate >= 0.5,
+        "downbeat on a bar line for only {downbeat_rate:.2} of loops"
+    );
 }

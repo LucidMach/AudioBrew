@@ -44,34 +44,94 @@ pub fn track_beats(samples: &[f32], sample_rate: u32) -> Option<Beats> {
     let strength: Vec<f64> = flux.iter().map(|f| f / mean).collect();
 
     let frames = beat_chain(&strength, period);
-    let downbeat_offset = pick_downbeat(&strength, &frames);
+    let kick = band_strength(samples, sample_rate, 0.0, KICK_MAX_HZ);
+    let snare = band_strength(samples, sample_rate, SNARE_RANGE_HZ.0, SNARE_RANGE_HZ.1);
+    let starts_on_beat = frames
+        .first()
+        .is_some_and(|&f| frame_to_secs(f, sample_rate) < 0.4 * 60.0 / bpm);
+    let downbeat_offset = pick_downbeat(
+        &strength,
+        &kick,
+        &snare,
+        &frames,
+        if starts_on_beat {
+            FIRST_BEAT_BONUS
+        } else {
+            0.0
+        },
+    );
     let times_secs = frames
         .iter()
         .map(|&frame| frame_to_secs(frame, sample_rate))
         .collect();
-    Some(Beats { bpm, times_secs, downbeat_offset })
+    Some(Beats {
+        bpm,
+        times_secs,
+        downbeat_offset,
+    })
 }
+
+/// Kick-drum band edge and snare band range, in Hz, used to find the downbeat.
+const KICK_MAX_HZ: f64 = 200.0;
+const SNARE_RANGE_HZ: (f64, f64) = (200.0, 2500.0);
+
+/// Onset strength within `lo_hz..hi_hz`, scaled to a mean of 1.
+fn band_strength(samples: &[f32], sample_rate: u32, lo_hz: f64, hi_hz: f64) -> Vec<f64> {
+    let bin = |hz: f64| (hz * FFT_SIZE as f64 / sample_rate as f64).ceil() as usize;
+    let envelope = smooth(
+        &smooth(
+            &onset_strength_in(samples, HOP, bin(lo_hz).max(1)..bin(hi_hz) + 1),
+            SMOOTH_RADIUS,
+        ),
+        SMOOTH_RADIUS,
+    );
+    let mean = envelope.iter().sum::<f64>() / envelope.len().max(1) as f64;
+    if mean <= 0.0 {
+        return envelope;
+    }
+    envelope.iter().map(|v| v / mean).collect()
+}
+
+/// Score added to the first beat as a downbeat candidate when the audio starts on a beat.
+/// Strong enough to break ties on unaccented music, weak enough that a clear accent still wins
+/// (1.5 lets the prior override it).
+const FIRST_BEAT_BONUS: f64 = 1.0;
 
 /// Beats per bar assumed when grouping beats into bars.
 const BEATS_PER_BAR: usize = 4;
 
-/// Which of the first `BEATS_PER_BAR` beats starts a bar: the phase whose beats (every fourth
-/// beat from it) have the strongest onsets on average, since bars tend to start with a hit.
-/// Ties go to the earliest beat.
-fn pick_downbeat(strength: &[f64], beat_frames: &[usize]) -> usize {
-    let mean_strength = |phase: usize| {
+/// Which of the first `BEATS_PER_BAR` beats starts a bar. Each candidate phase is scored against
+/// the usual backbeat: kick on beats 1 and 3, snare on beats 2 and 4. Ties go to the earliest.
+fn pick_downbeat(
+    overall: &[f64],
+    kick: &[f64],
+    snare: &[f64],
+    beat_frames: &[usize],
+    first_beat_bonus: f64,
+) -> usize {
+    // Mean strength of `envelope` on beats that sit `slot` places after bar phase `phase`.
+    let at = |envelope: &[f64], phase: usize, slot: usize| {
         let hits: Vec<f64> = beat_frames
             .iter()
-            .skip(phase)
+            .skip(phase + slot)
             .step_by(BEATS_PER_BAR)
-            .map(|&frame| strength[frame])
+            .map(|&frame| envelope[frame])
             .collect();
         hits.iter().sum::<f64>() / hits.len().max(1) as f64
     };
+    let score = |phase: usize| {
+        at(kick, phase, 0) + at(kick, phase, 2) - at(kick, phase, 1) - at(kick, phase, 3)
+            + at(snare, phase, 1)
+            + at(snare, phase, 3)
+            - at(snare, phase, 0)
+            - at(snare, phase, 2)
+            + 0.1 * at(overall, phase, 0)
+            + if phase == 0 { first_beat_bonus } else { 0.0 }
+    };
     (0..BEATS_PER_BAR.min(beat_frames.len()))
         .fold((0, f64::NEG_INFINITY), |best, phase| {
-            let score = mean_strength(phase);
-            if score > best.1 { (phase, score) } else { best }
+            let s = score(phase);
+            if s > best.1 { (phase, s) } else { best }
         })
         .0
 }
@@ -172,6 +232,11 @@ const LOG_GAMMA: f32 = 100.0;
 /// frequency bin since the previous frame, summed over bins. Unlike plain energy, a hi-hat
 /// over a steady bass line still registers, because only its own frequencies are compared.
 fn onset_strength(samples: &[f32], hop: usize) -> Vec<f64> {
+    onset_strength_in(samples, hop, 0..usize::MAX)
+}
+
+/// Spectral flux counting only the FFT bins in `bins`.
+fn onset_strength_in(samples: &[f32], hop: usize, bins: std::ops::Range<usize>) -> Vec<f64> {
     use realfft::RealFftPlanner;
 
     if samples.len() < FFT_SIZE {
@@ -198,7 +263,7 @@ fn onset_strength(samples: &[f32], hop: usize) -> Vec<f64> {
         let mut growth = 0.0f64;
         for (bin, value) in spectrum.iter().enumerate() {
             let level = (1.0 + LOG_GAMMA * value.norm() / window_sum).ln();
-            if frame > 0 {
+            if frame > 0 && bins.contains(&bin) {
                 growth += (level - previous[bin]).max(0.0) as f64;
             }
             previous[bin] = level;
@@ -261,7 +326,12 @@ mod tests {
 
     /// A click track whose every fourth click (starting at beat index `accent_phase`) is full
     /// strength while the others are half strength, like a kick on beat 1 of each bar.
-    fn accented_click_track(bpm: f64, secs: f64, first_click_secs: f64, accent_phase: usize) -> Vec<f32> {
+    fn accented_click_track(
+        bpm: f64,
+        secs: f64,
+        first_click_secs: f64,
+        accent_phase: usize,
+    ) -> Vec<f32> {
         let mut samples = vec![0.0; (secs * SAMPLE_RATE as f64) as usize];
         let click_len = (0.01 * SAMPLE_RATE as f64) as usize;
         let mut index = 0usize;
@@ -302,9 +372,17 @@ mod tests {
                 .iter()
                 .map(|b| (b - t).abs())
                 .fold(f64::INFINITY, f64::min);
-            assert!(nearest <= 0.015, "no beat within 15 ms of {t:.2}s (nearest {nearest:.3}s)");
+            assert!(
+                nearest <= 0.015,
+                "no beat within 15 ms of {t:.2}s (nearest {nearest:.3}s)"
+            );
         }
-        assert_eq!(beats.times_secs.len(), truth.len(), "{:?}", beats.times_secs);
+        assert_eq!(
+            beats.times_secs.len(),
+            truth.len(),
+            "{:?}",
+            beats.times_secs
+        );
     }
 
     #[test]
@@ -315,6 +393,21 @@ mod tests {
         let beats = track_beats(&samples, SAMPLE_RATE).expect("a steady pulse has beats");
 
         assert_eq!(beats.downbeat_offset, 2, "beats {:?}", beats.times_secs);
+    }
+
+    #[test]
+    fn a_clear_accent_beats_the_start_of_audio_prior() {
+        // Clicks start almost at the beginning (so the start prior applies), but the loud click is beat index 2.
+        let samples = accented_click_track(120.0, 12.0, 0.12, 2);
+
+        let beats = track_beats(&samples, SAMPLE_RATE).expect("a steady pulse has beats");
+
+        assert_eq!(
+            beats.downbeat_offset,
+            2,
+            "beats {:?}",
+            &beats.times_secs[..6]
+        );
     }
 
     #[test]
