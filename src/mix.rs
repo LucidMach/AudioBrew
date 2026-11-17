@@ -46,6 +46,35 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_shorter_track_is_silent_past_its_end() {
+        let long = [0.5, 0.5, 0.5];
+        let short = [0.25];
+        let tracks = [
+            TrackSignal { fader: 1.0, samples: &long },
+            TrackSignal { fader: 1.0, samples: &short },
+        ];
+
+        assert_eq!(mix_down(&tracks), vec![0.75, 0.5, 0.5]);
+    }
+
+    #[test]
+    fn loud_tracks_are_limited_instead_of_clipping_past_full_scale() {
+        let a = [0.75, -0.75];
+        let b = [0.75, -0.75];
+        let tracks = [
+            TrackSignal { fader: 1.0, samples: &a },
+            TrackSignal { fader: 1.0, samples: &b },
+        ];
+
+        assert_eq!(mix_down(&tracks), vec![1.0, -1.0]);
+    }
+
+    #[test]
+    fn no_tracks_make_an_empty_mashup() {
+        assert_eq!(mix_down(&[]), Vec::<f32>::new());
+    }
+
+    #[test]
     fn mashup_is_the_faded_sum_of_the_tracks_then_limited() {
         let drums = [0.5, 0.5, -0.25];
         let vocals = [0.75, -0.25, -1.0];
