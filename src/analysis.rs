@@ -26,6 +26,8 @@ pub struct Beats {
     pub bpm: f64,
     /// Time of every detected beat, in seconds from the start of the audio.
     pub times_secs: Vec<f64>,
+    /// Which beat starts a bar: `times_secs[downbeat_offset]`, then every fourth beat after it.
+    pub downbeat_offset: usize,
 }
 
 /// Finds the tempo and the time of every beat in mono `samples`.
@@ -41,11 +43,37 @@ pub fn track_beats(samples: &[f32], sample_rate: u32) -> Option<Beats> {
     }
     let strength: Vec<f64> = flux.iter().map(|f| f / mean).collect();
 
-    let times_secs = beat_chain(&strength, period)
-        .into_iter()
-        .map(|frame| frame_to_secs(frame, sample_rate))
+    let frames = beat_chain(&strength, period);
+    let downbeat_offset = pick_downbeat(&strength, &frames);
+    let times_secs = frames
+        .iter()
+        .map(|&frame| frame_to_secs(frame, sample_rate))
         .collect();
-    Some(Beats { bpm, times_secs })
+    Some(Beats { bpm, times_secs, downbeat_offset })
+}
+
+/// Beats per bar assumed when grouping beats into bars.
+const BEATS_PER_BAR: usize = 4;
+
+/// Which of the first `BEATS_PER_BAR` beats starts a bar: the phase whose beats (every fourth
+/// beat from it) have the strongest onsets on average, since bars tend to start with a hit.
+/// Ties go to the earliest beat.
+fn pick_downbeat(strength: &[f64], beat_frames: &[usize]) -> usize {
+    let mean_strength = |phase: usize| {
+        let hits: Vec<f64> = beat_frames
+            .iter()
+            .skip(phase)
+            .step_by(BEATS_PER_BAR)
+            .map(|&frame| strength[frame])
+            .collect();
+        hits.iter().sum::<f64>() / hits.len().max(1) as f64
+    };
+    (0..BEATS_PER_BAR.min(beat_frames.len()))
+        .fold((0, f64::NEG_INFINITY), |best, phase| {
+            let score = mean_strength(phase);
+            if score > best.1 { (phase, score) } else { best }
+        })
+        .0
 }
 
 /// The seconds at which an onset that peaks at envelope `frame` actually occurred. Spectral flux
@@ -231,6 +259,26 @@ mod tests {
         samples
     }
 
+    /// A click track whose every fourth click (starting at beat index `accent_phase`) is full
+    /// strength while the others are half strength, like a kick on beat 1 of each bar.
+    fn accented_click_track(bpm: f64, secs: f64, first_click_secs: f64, accent_phase: usize) -> Vec<f32> {
+        let mut samples = vec![0.0; (secs * SAMPLE_RATE as f64) as usize];
+        let click_len = (0.01 * SAMPLE_RATE as f64) as usize;
+        let mut index = 0usize;
+        let mut beat = first_click_secs;
+        while beat < secs {
+            let level = if index % 4 == accent_phase { 1.0 } else { 0.5 };
+            let start = (beat * SAMPLE_RATE as f64) as usize;
+            for i in 0..click_len.min(samples.len().saturating_sub(start)) {
+                let decay = level * (1.0 - i as f32 / click_len as f32);
+                samples[start + i] = if i % 2 == 0 { decay } else { -decay };
+            }
+            beat += 60.0 / bpm;
+            index += 1;
+        }
+        samples
+    }
+
     /// True if `estimate` is within 1 BPM of `truth`, or of exactly half or double it.
     /// Half and double time are the same pulse, so beat trackers cannot always tell them apart.
     fn matches_up_to_octave(estimate: f64, truth: f64) -> bool {
@@ -257,6 +305,27 @@ mod tests {
             assert!(nearest <= 0.015, "no beat within 15 ms of {t:.2}s (nearest {nearest:.3}s)");
         }
         assert_eq!(beats.times_secs.len(), truth.len(), "{:?}", beats.times_secs);
+    }
+
+    #[test]
+    fn the_accented_beat_is_the_downbeat() {
+        // Beats 2, 6, 10, ... are loud, so beat index 2 (the third click) starts each bar.
+        let samples = accented_click_track(120.0, 12.0, 0.25, 2);
+
+        let beats = track_beats(&samples, SAMPLE_RATE).expect("a steady pulse has beats");
+
+        assert_eq!(beats.downbeat_offset, 2, "beats {:?}", beats.times_secs);
+    }
+
+    #[test]
+    fn the_downbeat_is_found_wherever_the_accent_falls_in_the_bar() {
+        for phase in 0..4 {
+            let samples = accented_click_track(120.0, 12.0, 0.25, phase);
+
+            let beats = track_beats(&samples, SAMPLE_RATE).expect("a steady pulse has beats");
+
+            assert_eq!(beats.downbeat_offset, phase, "accent on beat index {phase}");
+        }
     }
 
     #[test]
