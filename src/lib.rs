@@ -10,6 +10,7 @@ pub mod history;
 pub mod import;
 pub mod ingest;
 pub mod key;
+pub mod keydetect;
 pub mod load;
 pub mod mix;
 pub mod pipeline;
