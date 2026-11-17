@@ -18,9 +18,36 @@ pub fn peaks(interleaved: &[f32], channels: usize, buckets: usize) -> Vec<f32> {
         .collect()
 }
 
+/// The first `fraction` (0.0 to 1.0) of a waveform `picture`, resampled to exactly `bars` bars.
+/// A clip cut off by the End marker shows only the part that still plays.
+pub fn visible_bars(picture: &[f32], fraction: f64, bars: usize) -> Vec<f32> {
+    if !fraction.is_finite() || fraction <= 0.0 {
+        return vec![0.0; bars];
+    }
+    let keep = ((picture.len() as f64 * fraction.min(1.0)).ceil() as usize).min(picture.len());
+    peaks(&picture[..keep], 1, bars)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_fraction_of_the_picture_is_resampled_to_the_requested_bars() {
+        let picture = [0.1, 0.9, 0.2, 0.7];
+
+        assert_eq!(visible_bars(&picture, 1.0, 2), vec![0.9, 0.7]);
+        assert_eq!(visible_bars(&picture, 0.5, 1), vec![0.9], "only the first two peaks remain");
+        assert_eq!(visible_bars(&picture, 0.25, 1), vec![0.1]);
+    }
+
+    #[test]
+    fn nothing_visible_or_nothing_to_show_gives_silent_bars() {
+        assert_eq!(visible_bars(&[0.5, 0.5], 0.0, 3), vec![0.0; 3]);
+        assert_eq!(visible_bars(&[], 1.0, 3), vec![0.0; 3]);
+        assert_eq!(visible_bars(&[0.5], f64::NAN, 2), vec![0.0; 2]);
+        assert_eq!(visible_bars(&[0.5], 1.0, 0), Vec::<f32>::new());
+    }
 
     #[test]
     fn each_bucket_is_the_loudest_sample_in_its_slice() {
