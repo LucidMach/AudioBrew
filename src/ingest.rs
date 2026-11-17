@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use crate::pipeline::{Executor, Loader};
+use crate::waveform::peaks;
 use crate::load::{DroppedFile, plan_drop};
 use crate::project::{LaneId, LoadedTrack, Project, ProjectError};
 
@@ -15,7 +16,12 @@ pub struct Analyzed {
     pub track: LoadedTrack,
     /// Where beat 1 falls in the source, in seconds (what `first_run` aligns on).
     pub downbeat_secs: f64,
+    /// Waveform picture: the peak level of each of `PEAK_BUCKETS` slices of the whole file.
+    pub peaks: Vec<f32>,
 }
+
+/// How many slices the waveform picture of a file is divided into.
+pub const PEAK_BUCKETS: usize = 1024;
 
 /// Loads `source` through `loader` and runs tempo and beat detection on it.
 pub fn analyze_source(
@@ -35,6 +41,7 @@ pub fn analyze_source(
             ..Default::default()
         },
         downbeat_secs: found.downbeat_secs,
+        peaks: peaks(&audio.samples, 2, PEAK_BUCKETS),
     })
 }
 
@@ -112,6 +119,8 @@ pub struct IngestReport {
     pub placed: Vec<LaneId>,
     /// Lanes whose file could not be loaded, with the reason.
     pub failed: Vec<(LaneId, String)>,
+    /// The waveform picture of each placed lane.
+    pub peaks: Vec<(LaneId, Vec<f32>)>,
 }
 
 /// One analysed (or failed) file coming back from a background job.
@@ -223,9 +232,14 @@ impl Ingestor {
         self.newest.retain(|_, newest| *newest != batch);
         ready.sort_by_key(|(index, _, _)| *index);
         let lanes: Vec<LaneId> = ready.iter().map(|(_, lane, _)| *lane).collect();
+        let pictures: Vec<(LaneId, Vec<f32>)> = ready
+            .iter()
+            .map(|(_, lane, analyzed)| (*lane, analyzed.peaks.clone()))
+            .collect();
         let files = ready.into_iter().map(|(index, _, analyzed)| (index, analyzed)).collect();
         if place_tracks(project, files).is_ok() {
             report.placed = lanes;
+            report.peaks = pictures;
         }
     }
 }
@@ -547,6 +561,34 @@ mod tests {
         let jobs = assign_dropped_paths(&mut project, &[PathBuf::from("a.wav")], Some(1));
 
         assert_eq!(jobs, vec![(l1, "a.wav".to_string())]);
+    }
+
+    #[test]
+    fn analysing_a_source_produces_a_waveform_picture_of_the_whole_file() {
+        let loader = loader(&[("drums.wav", stereo_clicks(120.0, 12.0, 0.25))]);
+
+        let analyzed = analyze_source(&loader, "drums.wav", RATE).unwrap();
+
+        assert_eq!(analyzed.peaks.len(), PEAK_BUCKETS);
+        // Clicks are full scale, and most of the file is silence between them.
+        assert!(analyzed.peaks.iter().any(|&p| p > 0.9), "no loud slice");
+        assert!(analyzed.peaks.iter().any(|&p| p == 0.0), "no silent slice");
+    }
+
+    #[test]
+    fn a_poll_hands_over_the_waveform_of_each_placed_lane() {
+        let (mut ingest, executor) = ingestor(&[("a.wav", stereo_clicks(100.0, 12.0, 0.25))]);
+        let mut project = Project::new();
+        let l0 = project.lane_id(0).unwrap();
+        ingest.drop_files(vec![(l0, "a.wav".into())]);
+        executor.run_all();
+
+        let report = ingest.poll(&mut project);
+
+        assert_eq!(report.placed, vec![l0]);
+        assert_eq!(report.peaks.len(), 1);
+        assert_eq!(report.peaks[0].0, l0);
+        assert_eq!(report.peaks[0].1.len(), PEAK_BUCKETS);
     }
 
     #[test]

@@ -37,6 +37,12 @@ pub struct Theme {
     /// Cyan: active, playing or soloed, and nothing else.
     pub glow: Rgb,
     pub text_on_glow: Rgb,
+    /// Key badge backgrounds: compatible, workable, clashing. Always paired with a text label,
+    /// so colour is never the only cue.
+    pub status_ok: Rgb,
+    pub status_warn: Rgb,
+    pub status_bad: Rgb,
+    pub text_on_status: Rgb,
 }
 
 impl Theme {
@@ -50,6 +56,10 @@ impl Theme {
             hairline: Rgb(110, 120, 136),
             glow: Rgb(0, 194, 224),
             text_on_glow: Rgb(6, 32, 42),
+            status_ok: Rgb(134, 239, 172),
+            status_warn: Rgb(253, 224, 71),
+            status_bad: Rgb(252, 165, 165),
+            text_on_status: Rgb(17, 24, 39),
         }
     }
 
@@ -63,6 +73,10 @@ impl Theme {
             hairline: Rgb(0, 0, 0),
             glow: Rgb(0, 229, 255),
             text_on_glow: Rgb(0, 0, 0),
+            status_ok: Rgb(134, 239, 172),
+            status_warn: Rgb(253, 224, 71),
+            status_bad: Rgb(252, 165, 165),
+            text_on_status: Rgb(0, 0, 0),
         }
     }
 
@@ -76,6 +90,9 @@ impl Theme {
             ("muted on inset", self.text_muted, self.inset),
             ("muted on mashup", self.text_muted, self.mashup_surface),
             ("label on glow", self.text_on_glow, self.glow),
+            ("label on ok", self.text_on_status, self.status_ok),
+            ("label on warn", self.text_on_status, self.status_warn),
+            ("label on bad", self.text_on_status, self.status_bad),
         ]
     }
 }
