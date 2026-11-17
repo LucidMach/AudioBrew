@@ -8,7 +8,7 @@ Pre-scaffold: no crate exists yet. "Product spec" and "Engine architecture" belo
 
 Toolchain: rustup stable (`~/.cargo/bin`). The broken Homebrew `rust` formula was uninstalled because it shadowed rustup; do not reinstall it.
 
-Crate layout so far: a library crate `audiobrew` (`src/lib.rs`) holding pure-logic modules, starting with `src/timeline.rs` (Mashup length / Offset maths). GPUI and audio-device code will sit on top of it.
+Crate layout so far: a library crate `audiobrew` (`src/lib.rs`) holding pure-logic modules, each with its tests inline: `timeline` (End marker, repeat seams), `tempo` (speed factor, stretch limits, half/double suggestion), `bands` (crossover-based Band config, max 6), `key` (Camelot compatibility), `mix` (Band mute/solo gains, limiter), `history` (undo/redo). GPUI and audio-device code will sit on top of it.
 
 ## Project
 
