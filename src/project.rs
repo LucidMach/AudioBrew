@@ -24,10 +24,18 @@ pub enum ProjectError {
     InvalidBpm,
 }
 
+/// A lane's identity. Unlike a lane's index it never shifts when another lane is removed,
+/// and it is never reused, so background work can be matched to the right lane.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub struct LaneId(pub u64);
+
 /// Everything undo/redo snapshots: the lanes and the Mashup-level settings.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Project {
     lanes: Vec<Option<LoadedTrack>>,
+    /// Parallel to `lanes`.
+    ids: Vec<LaneId>,
+    next_id: u64,
     mashup_bpm_override: Option<f64>,
 }
 
@@ -41,6 +49,8 @@ impl Project {
     pub fn new() -> Self {
         Self {
             lanes: vec![None; MIN_LANES],
+            ids: (0..MIN_LANES as u64).map(LaneId).collect(),
+            next_id: MIN_LANES as u64,
             mashup_bpm_override: None,
         }
     }
@@ -55,6 +65,24 @@ impl Project {
 
     pub fn add_lane(&mut self) {
         self.lanes.push(None);
+        self.ids.push(LaneId(self.next_id));
+        self.next_id += 1;
+    }
+
+    pub fn lane_id(&self, index: usize) -> Option<LaneId> {
+        self.ids.get(index).copied()
+    }
+
+    pub fn lane_index(&self, id: LaneId) -> Option<usize> {
+        self.ids.iter().position(|&i| i == id)
+    }
+
+    /// The loaded Tracks with their lane ids, in lane order.
+    pub fn tracks(&self) -> impl Iterator<Item = (LaneId, &LoadedTrack)> {
+        self.ids
+            .iter()
+            .zip(&self.lanes)
+            .filter_map(|(&id, lane)| Some((id, lane.as_ref()?)))
     }
 
     /// Removes a lane and its Track. Never goes below two lanes.
@@ -66,6 +94,7 @@ impl Project {
             return Err(ProjectError::MinLanes);
         }
         self.lanes.remove(lane);
+        self.ids.remove(lane);
         Ok(())
     }
 
@@ -293,5 +322,72 @@ mod tests {
         history.undo();
         assert_eq!(history.current().lane_count(), 3);
         assert_eq!(history.current().track(2).unwrap().bpm, Some(90.0));
+    }
+
+    #[test]
+    fn every_lane_has_its_own_id() {
+        let mut p = Project::new();
+        p.add_lane();
+        let ids: Vec<_> = (0..3).map(|i| p.lane_id(i).unwrap()).collect();
+        assert_ne!(ids[0], ids[1]);
+        assert_ne!(ids[1], ids[2]);
+        assert_ne!(ids[0], ids[2]);
+        assert_eq!(p.lane_id(3), None);
+    }
+
+    #[test]
+    fn a_lanes_id_survives_other_lanes_being_removed() {
+        let mut p = Project::new();
+        p.add_lane();
+        let (first, third) = (p.lane_id(0).unwrap(), p.lane_id(2).unwrap());
+
+        p.remove_lane(0).unwrap();
+
+        // The old third lane is now at index 1 but is still the same lane.
+        assert_eq!(p.lane_id(1), Some(third));
+        assert_ne!(p.lane_id(0), Some(first));
+        assert_eq!(p.lane_index(third), Some(1));
+        assert_eq!(p.lane_index(first), None);
+    }
+
+    #[test]
+    fn a_removed_lanes_id_is_never_handed_to_a_new_lane() {
+        let mut p = Project::new();
+        p.add_lane();
+        let removed = p.lane_id(2).unwrap();
+        p.remove_lane(2).unwrap();
+        p.add_lane();
+        assert_ne!(p.lane_id(2), Some(removed));
+    }
+
+    #[test]
+    fn clearing_or_reloading_a_track_keeps_its_lane_id() {
+        let mut p = Project::new();
+        let id = p.lane_id(0).unwrap();
+        p.load_track(0, track(Some(120.0))).unwrap();
+        p.load_track(0, track(Some(90.0))).unwrap();
+        p.clear_track(0).unwrap();
+        assert_eq!(p.lane_id(0), Some(id));
+    }
+
+    #[test]
+    fn tracks_lists_only_loaded_lanes_with_their_ids() {
+        let mut p = Project::new();
+        p.add_lane();
+        p.load_track(2, track(Some(100.0))).unwrap();
+        let listed: Vec<_> = p.tracks().map(|(id, t)| (id, t.bpm)).collect();
+        assert_eq!(listed, vec![(p.lane_id(2).unwrap(), Some(100.0))]);
+    }
+
+    #[test]
+    fn undo_through_history_restores_the_same_lane_ids() {
+        let mut history = crate::history::History::new(Project::new());
+        let before = history.current().lane_id(1);
+        let mut next = history.current().clone();
+        next.add_lane();
+        next.remove_lane(0).unwrap();
+        history.edit(next);
+        history.undo();
+        assert_eq!(history.current().lane_id(1), before);
     }
 }

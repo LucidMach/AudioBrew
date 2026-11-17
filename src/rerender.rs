@@ -37,7 +37,7 @@ pub fn tracks_to_rerender(
 #[derive(Debug, Default)]
 pub struct RenderJobs {
     next_generation: u64,
-    latest: HashMap<usize, u64>,
+    latest: HashMap<u64, u64>,
 }
 
 impl RenderJobs {
@@ -49,7 +49,7 @@ impl RenderJobs {
     }
 
     /// Starts a render for `lane`; any earlier one for that lane becomes stale.
-    pub fn start(&mut self, lane: usize) -> u64 {
+    pub fn start(&mut self, lane: u64) -> u64 {
         let generation = self.next_generation;
         self.next_generation += 1;
         self.latest.insert(lane, generation);
@@ -57,12 +57,12 @@ impl RenderJobs {
     }
 
     /// Makes any in-flight render for `lane` stale.
-    pub fn cancel(&mut self, lane: usize) {
+    pub fn cancel(&mut self, lane: u64) {
         self.latest.remove(&lane);
     }
 
     /// True if this result is the latest for its lane and should be applied (once).
-    pub fn finish(&mut self, lane: usize, generation: u64) -> bool {
+    pub fn finish(&mut self, lane: u64, generation: u64) -> bool {
         if self.latest.get(&lane) == Some(&generation) {
             self.latest.remove(&lane);
             true

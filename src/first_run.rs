@@ -93,7 +93,7 @@ pub fn plan_first_run(tracks: &[TrackInput]) -> Option<FirstRunPlan> {
 
 /// Speed factor for one Track: auto-applies halve/double when it rescues the stretch,
 /// otherwise caps at the stretch limit and flags a warning.
-fn stretch_for(bpm: f64, mashup: f64) -> (f64, Option<BpmFix>, bool) {
+pub fn stretch_for(bpm: f64, mashup: f64) -> (f64, Option<BpmFix>, bool) {
     let fix = suggest_bpm_fix(bpm, mashup);
     let effective = match fix {
         Some(BpmFix::Double) => bpm * 2.0,
@@ -237,5 +237,13 @@ mod tests {
         assert!(close(plan.end_secs, 10.0 / 1.2));
         assert!(plan.tracks[0].repeats);
         assert!(!plan.tracks[1].repeats);
+    }
+
+    #[test]
+    fn stretch_for_is_available_on_its_own_for_one_track() {
+        assert_eq!(stretch_for(100.0, 120.0), (1.2, None, false));
+        let (factor, fix, warn) = stretch_for(60.0, 140.0);
+        assert!(close(factor, 140.0 / 120.0));
+        assert_eq!((fix, warn), (Some(BpmFix::Double), false));
     }
 }
