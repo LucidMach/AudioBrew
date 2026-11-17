@@ -10,6 +10,7 @@ pub mod grid;
 pub mod history;
 pub mod import;
 pub mod ingest;
+pub mod inspector_view;
 pub mod key;
 pub mod lane_view;
 pub mod keydetect;
