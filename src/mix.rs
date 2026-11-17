@@ -11,12 +11,22 @@ pub fn effective_gains(bands: &[BandState]) -> Vec<f32> {
     let any_solo = bands.iter().any(|b| b.solo);
     bands
         .iter()
-        .map(|b| if b.mute || (any_solo && !b.solo) { 0.0 } else { b.gain })
+        .map(|b| {
+            if b.mute || (any_solo && !b.solo) {
+                0.0
+            } else {
+                b.gain
+            }
+        })
         .collect()
 }
 
 /// The Mashup limiter: output never exceeds full scale (+/-1.0), so summed Tracks cannot clip.
+/// A NaN sample becomes silence so it can never reach the output device.
 pub fn limit(sample: f32) -> f32 {
+    if sample.is_nan() {
+        return 0.0;
+    }
     sample.clamp(-1.0, 1.0)
 }
 
@@ -50,8 +60,14 @@ mod tests {
         let long = [0.5, 0.5, 0.5];
         let short = [0.25];
         let tracks = [
-            TrackSignal { fader: 1.0, samples: &long },
-            TrackSignal { fader: 1.0, samples: &short },
+            TrackSignal {
+                fader: 1.0,
+                samples: &long,
+            },
+            TrackSignal {
+                fader: 1.0,
+                samples: &short,
+            },
         ];
 
         assert_eq!(mix_down(&tracks), vec![0.75, 0.5, 0.5]);
@@ -62,8 +78,14 @@ mod tests {
         let a = [0.75, -0.75];
         let b = [0.75, -0.75];
         let tracks = [
-            TrackSignal { fader: 1.0, samples: &a },
-            TrackSignal { fader: 1.0, samples: &b },
+            TrackSignal {
+                fader: 1.0,
+                samples: &a,
+            },
+            TrackSignal {
+                fader: 1.0,
+                samples: &b,
+            },
         ];
 
         assert_eq!(mix_down(&tracks), vec![1.0, -1.0]);
@@ -79,8 +101,14 @@ mod tests {
         let drums = [0.5, 0.5, -0.25];
         let vocals = [0.75, -0.25, -1.0];
         let tracks = [
-            TrackSignal { fader: 1.0, samples: &drums },
-            TrackSignal { fader: 0.5, samples: &vocals },
+            TrackSignal {
+                fader: 1.0,
+                samples: &drums,
+            },
+            TrackSignal {
+                fader: 0.5,
+                samples: &vocals,
+            },
         ];
 
         // 0.5 + 0.375 = 0.875 | 0.5 - 0.125 = 0.375 | -0.25 - 0.5 = -0.75
@@ -100,7 +128,11 @@ mod tests {
 
     #[test]
     fn soloing_a_band_silences_the_others() {
-        let bands = [band(0.8, false, false), band(0.5, false, true), band(0.9, false, false)];
+        let bands = [
+            band(0.8, false, false),
+            band(0.5, false, true),
+            band(0.9, false, false),
+        ];
 
         assert_eq!(effective_gains(&bands), vec![0.0, 0.5, 0.0]);
     }
@@ -117,5 +149,35 @@ mod tests {
         let bands = [band(0.8, false, false), band(0.5, true, false)];
 
         assert_eq!(effective_gains(&bands), vec![0.8, 0.0]);
+    }
+
+    #[test]
+    fn the_limiter_never_passes_nan_or_infinity_to_the_output() {
+        assert_eq!(limit(f32::NAN), 0.0);
+        assert_eq!(limit(f32::INFINITY), 1.0);
+        assert_eq!(limit(f32::NEG_INFINITY), -1.0);
+    }
+
+    #[test]
+    fn full_scale_passes_through_the_limiter_unchanged() {
+        assert_eq!(limit(1.0), 1.0);
+        assert_eq!(limit(-1.0), -1.0);
+    }
+
+    #[test]
+    fn a_nan_sample_in_one_track_does_not_poison_the_mashup() {
+        let bad = [f32::NAN, 0.25];
+        let good = [0.5, 0.5];
+        let tracks = [
+            TrackSignal {
+                fader: 1.0,
+                samples: &bad,
+            },
+            TrackSignal {
+                fader: 1.0,
+                samples: &good,
+            },
+        ];
+        assert!(mix_down(&tracks).iter().all(|s| s.is_finite()));
     }
 }

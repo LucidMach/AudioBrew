@@ -39,7 +39,10 @@ mod tests {
     #[test]
     fn a_zero_length_track_never_repeats() {
         // Guards against an infinite list of seams at the same instant.
-        let empty = Placement { length_secs: 0.0, offset_secs: 2.0 };
+        let empty = Placement {
+            length_secs: 0.0,
+            offset_secs: 2.0,
+        };
 
         assert_eq!(repeat_seams_secs(empty, 10.0), Vec::<f64>::new());
     }
@@ -47,8 +50,14 @@ mod tests {
     #[test]
     fn dragged_end_marker_overrides_the_longest_track_default() {
         let tracks = [
-            Placement { length_secs: 10.0, offset_secs: 0.0 },
-            Placement { length_secs: 8.0, offset_secs: 5.0 },
+            Placement {
+                length_secs: 10.0,
+                offset_secs: 0.0,
+            },
+            Placement {
+                length_secs: 8.0,
+                offset_secs: 5.0,
+            },
         ];
 
         assert_eq!(end_marker_secs(&tracks, None), 13.0);
@@ -59,7 +68,10 @@ mod tests {
     fn repeating_track_starts_a_new_pass_every_length_until_the_end_marker() {
         // A 4s drum loop at offset 0 under a Mashup that ends at 10s
         // plays 2.5 times: new passes begin at 4s and 8s.
-        let drums = Placement { length_secs: 4.0, offset_secs: 0.0 };
+        let drums = Placement {
+            length_secs: 4.0,
+            offset_secs: 0.0,
+        };
 
         assert_eq!(repeat_seams_secs(drums, 10.0), vec![4.0, 8.0]);
     }
@@ -69,8 +81,14 @@ mod tests {
         // Track 1: 10s long, starts at 0s -> ends at 10s.
         // Track 2: 8s long, nudged to start at 5s -> ends at 13s.
         let tracks = [
-            Placement { length_secs: 10.0, offset_secs: 0.0 },
-            Placement { length_secs: 8.0, offset_secs: 5.0 },
+            Placement {
+                length_secs: 10.0,
+                offset_secs: 0.0,
+            },
+            Placement {
+                length_secs: 8.0,
+                offset_secs: 5.0,
+            },
         ];
 
         assert_eq!(mashup_length_secs(&tracks), 13.0);

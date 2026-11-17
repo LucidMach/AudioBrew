@@ -7,7 +7,11 @@ pub struct History<T> {
 
 impl<T: Clone> History<T> {
     pub fn new(initial: T) -> Self {
-        Self { past: Vec::new(), current: initial, future: Vec::new() }
+        Self {
+            past: Vec::new(),
+            current: initial,
+            future: Vec::new(),
+        }
     }
 
     pub fn current(&self) -> &T {
@@ -28,7 +32,8 @@ impl<T: Clone> History<T> {
 
     pub fn undo(&mut self) {
         if let Some(previous) = self.past.pop() {
-            self.future.push(std::mem::replace(&mut self.current, previous));
+            self.future
+                .push(std::mem::replace(&mut self.current, previous));
         }
     }
 }

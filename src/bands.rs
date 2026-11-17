@@ -17,7 +17,9 @@ pub enum BandError {
 
 impl Default for BandConfig {
     fn default() -> Self {
-        Self { crossovers: vec![300.0, 4_000.0] }
+        Self {
+            crossovers: vec![300.0, 4_000.0],
+        }
     }
 }
 
@@ -27,7 +29,7 @@ impl BandConfig {
         if self.crossovers.len() + 1 >= MAX_BANDS {
             return Err(BandError::TooManyBands);
         }
-        if hz <= MIN_HZ || hz >= MAX_HZ || self.crossovers.contains(&hz) {
+        if !hz.is_finite() || hz <= MIN_HZ || hz >= MAX_HZ || self.crossovers.contains(&hz) {
             return Err(BandError::InvalidCrossover);
         }
         let at = self.crossovers.partition_point(|&c| c < hz);
@@ -41,9 +43,13 @@ impl BandConfig {
         if index >= self.crossovers.len() {
             return Err(BandError::InvalidCrossover);
         }
-        let lower = if index == 0 { MIN_HZ } else { self.crossovers[index - 1] };
+        let lower = if index == 0 {
+            MIN_HZ
+        } else {
+            self.crossovers[index - 1]
+        };
         let upper = self.crossovers.get(index + 1).copied().unwrap_or(MAX_HZ);
-        if hz <= lower || hz >= upper {
+        if !hz.is_finite() || hz <= lower || hz >= upper {
             return Err(BandError::InvalidCrossover);
         }
         self.crossovers[index] = hz;
@@ -97,7 +103,10 @@ mod tests {
     fn a_crossover_cannot_be_dragged_past_its_neighbour() {
         let mut bands = BandConfig::default();
 
-        assert_eq!(bands.move_crossover(0, 5_000.0), Err(BandError::InvalidCrossover));
+        assert_eq!(
+            bands.move_crossover(0, 5_000.0),
+            Err(BandError::InvalidCrossover)
+        );
         assert_eq!(
             bands.ranges(),
             vec![(20.0, 300.0), (300.0, 4_000.0), (4_000.0, 20_000.0)]
@@ -108,7 +117,10 @@ mod tests {
     fn moving_a_crossover_that_does_not_exist_is_an_error_not_a_panic() {
         let mut bands = BandConfig::default(); // 3 Bands, so crossovers 0 and 1 only
 
-        assert_eq!(bands.move_crossover(2, 5_000.0), Err(BandError::InvalidCrossover));
+        assert_eq!(
+            bands.move_crossover(2, 5_000.0),
+            Err(BandError::InvalidCrossover)
+        );
     }
 
     #[test]
@@ -140,5 +152,42 @@ mod tests {
             ranges,
             vec![(20.0, 300.0), (300.0, 4_000.0), (4_000.0, 20_000.0)]
         );
+    }
+
+    #[test]
+    fn a_nan_or_infinite_crossover_is_rejected_and_changes_nothing() {
+        let mut bands = BandConfig::default();
+        let before = bands.ranges();
+
+        assert_eq!(bands.add_band(f64::NAN), Err(BandError::InvalidCrossover));
+        assert_eq!(
+            bands.add_band(f64::INFINITY),
+            Err(BandError::InvalidCrossover)
+        );
+        assert_eq!(
+            bands.move_crossover(0, f64::NAN),
+            Err(BandError::InvalidCrossover)
+        );
+        assert_eq!(
+            bands.move_crossover(1, f64::NEG_INFINITY),
+            Err(BandError::InvalidCrossover)
+        );
+        assert_eq!(bands.ranges(), before);
+    }
+
+    #[test]
+    fn the_edges_of_the_audible_range_are_not_valid_crossovers() {
+        let mut bands = BandConfig::default();
+        assert_eq!(bands.add_band(20.0), Err(BandError::InvalidCrossover));
+        assert_eq!(bands.add_band(20_000.0), Err(BandError::InvalidCrossover));
+        assert!(bands.add_band(20.5).is_ok());
+    }
+
+    #[test]
+    fn moving_a_crossover_onto_its_own_value_is_a_harmless_no_op() {
+        let mut bands = BandConfig::default();
+        let before = bands.ranges();
+        assert_eq!(bands.move_crossover(0, 300.0), Ok(()));
+        assert_eq!(bands.ranges(), before);
     }
 }
