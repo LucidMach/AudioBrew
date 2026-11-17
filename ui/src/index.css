@@ -13,12 +13,16 @@
   --text-muted: #6b6b73;
   --mute: #f0a020;
   --solo: #2fb36b;
-  --arm: #e5484d;
   --meter-low: #2fb36b;
   --focus: #4f8cff;
+  --danger: #e5484d;
+  --tooltip-bg: #18181b;
+  --tooltip-border: #18181b;
+  --tooltip-text: #fafafa;
+  --tooltip-muted: #c4c4cc;
 
   --header-width: 300px;
-  --track-height: 104px;
+  --track-height: 100px;
   --ruler-height: 28px;
   --radius: 6px;
 
@@ -43,6 +47,8 @@
     --control-hover: #303036;
     --text: #f4f4f5;
     --text-muted: #9a9aa3;
+    --tooltip-bg: #2a2a30;
+    --tooltip-border: #3a3a41;
   }
 }
 
@@ -91,6 +97,8 @@ input {
   background: var(--lane);
   border-bottom: 1px solid var(--border);
   overscroll-behavior: contain;
+  /* Lets lane content size itself to the visible width (cqw). */
+  container-type: inline-size;
 }
 
 .track {
@@ -222,12 +230,45 @@ input {
   outline: none;
 }
 
+.icon-button {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.icon-button:hover:not([aria-disabled='true']) {
+  border-color: var(--border);
+  background: var(--control);
+  color: var(--text);
+}
+
+.icon-button-danger:hover {
+  color: var(--danger);
+}
+
+.icon-button[aria-disabled='true'] {
+  opacity: 0.35;
+  cursor: default;
+}
+
 .track-buttons {
   display: flex;
   gap: 3px;
 }
 
 .toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   width: 22px;
   height: 22px;
   padding: 0;
@@ -244,10 +285,6 @@ input {
   background: var(--control-hover);
 }
 
-.toggle-arm {
-  font-size: 10px;
-}
-
 .toggle-mute.is-on {
   background: var(--mute);
   border-color: var(--mute);
@@ -260,15 +297,9 @@ input {
   color: #00170b;
 }
 
-.toggle-arm.is-on {
-  background: var(--arm);
-  border-color: var(--arm);
-  color: #fff;
-}
+/* ---------- Slider (volume, pan) ---------- */
 
-/* ---------- Fader ---------- */
-
-.fader {
+.slider {
   position: relative;
   flex: 1;
   min-width: 60px;
@@ -277,7 +308,7 @@ input {
   touch-action: none;
 }
 
-.fader-track {
+.slider-track {
   position: absolute;
   left: 0;
   right: 0;
@@ -288,27 +319,34 @@ input {
   background: var(--control-hover);
 }
 
-.fader-fill {
+.slider-fill {
   position: absolute;
-  inset: 0 auto 0 0;
-  width: var(--fill);
+  top: 0;
+  bottom: 0;
   border-radius: 2px;
-  background: var(--accent);
+  background: var(--track-color);
 }
 
-.fader-unity {
+/* Break points: small ticks; the default (0 dB, centre) is taller. */
+.slider-tick {
   position: absolute;
-  top: -4px;
-  bottom: -4px;
+  top: -2px;
+  bottom: -2px;
   width: 1px;
   background: var(--text-muted);
-  opacity: 0.5;
+  opacity: 0.4;
 }
 
-.fader-thumb {
+.slider-tick.is-default {
+  top: -4px;
+  bottom: -4px;
+  opacity: 0.6;
+}
+
+.slider-thumb {
   position: absolute;
   top: 50%;
-  left: var(--fill);
+  left: var(--pos);
   width: 12px;
   height: 16px;
   transform: translate(-50%, -50%);
@@ -318,42 +356,7 @@ input {
   box-shadow: 0 1px 2px rgb(0 0 0 / 0.25);
 }
 
-/* ---------- Knob ---------- */
-
-.knob {
-  flex: 0 0 auto;
-  width: 28px;
-  height: 28px;
-  cursor: ns-resize;
-  touch-action: none;
-  border-radius: 50%;
-}
-
-.knob-ring {
-  fill: none;
-  stroke: var(--control-hover);
-  stroke-width: 3;
-}
-
-.knob-arc {
-  fill: none;
-  stroke: var(--track-color);
-  stroke-width: 3;
-  stroke-linecap: round;
-}
-
-.knob-cap {
-  fill: var(--control);
-  stroke: var(--border);
-}
-
-.knob-pointer {
-  stroke: var(--text);
-  stroke-width: 1.5;
-  stroke-linecap: round;
-}
-
-/* ---------- Readouts, IO row ---------- */
+/* ---------- Readouts ---------- */
 
 .readout {
   flex: 0 0 auto;
@@ -363,41 +366,70 @@ input {
   text-align: right;
 }
 
-.readout-db {
-  width: 32px;
+/* Wide enough for "-60.0 dB" on one line. */
+.readout {
+  width: 52px;
+  white-space: nowrap;
 }
 
-.readout-pan {
-  width: 24px;
-  text-align: left;
+.readout-button {
+  height: 20px;
+  padding: 0 3px;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  background: none;
+  cursor: text;
 }
 
-.io-select {
-  flex: 1;
+.readout-button:hover {
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.readout-editing {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 3px;
+}
+
+.readout-input {
+  width: 100%;
   min-width: 0;
-  height: 22px;
-  padding: 0 4px;
-  border: 1px solid var(--border);
+  height: 20px;
+  padding: 0 3px;
+  border: 1px solid var(--focus);
   border-radius: 4px;
-  background: var(--control);
+  background: var(--bg);
   font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+  outline: none;
 }
 
-.chip {
-  height: 22px;
-  padding: 0 8px;
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  background: var(--control);
-  font-size: 11px;
-  font-weight: 600;
+.readout-unit {
+  flex: 0 0 auto;
+}
+
+.row-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
   color: var(--text-muted);
-  cursor: pointer;
 }
 
-.chip:hover,
-.io-select:hover {
-  background: var(--control-hover);
+.pan-end {
+  flex: 0 0 auto;
+  width: 8px;
+  justify-content: center;
+  font-size: 11px;
+  font-weight: 700;
+  color: var(--text-muted);
+  text-align: center;
+}
+
+/* R + gap + this = the volume readout's 52px, so both readouts line up on the right. */
+.readout-pan {
+  width: 38px;
 }
 
 /* ---------- Meter ---------- */
@@ -453,28 +485,113 @@ input {
   opacity: 0.55;
 }
 
-.lane-hint {
+.lane.is-drag-over {
+  background-color: var(--lane-selected);
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
+
+/* Pinned to the visible part of the lane, so its content stays centred while scrolling. */
+.lane-viewport {
   position: sticky;
-  left: calc(var(--header-width) + 16px);
-  display: inline-block;
-  margin-top: calc(var(--track-height) / 2 - 8px);
-  margin-left: 16px;
-  font-size: 12px;
+  left: var(--header-width);
+  width: calc(100cqw - var(--header-width));
+  height: 100%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 8px;
+}
+
+.lane-drop {
+  width: 100%;
+  height: 100%;
+  padding: 0 12px;
+  border: 1px dashed var(--grid-bar);
+  border-radius: var(--radius);
+  background: color-mix(in srgb, var(--lane) 70%, transparent);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
   color: var(--text-muted);
-  opacity: 0.7;
+  text-align: center;
+  cursor: pointer;
+}
+
+.lane-drop:hover {
+  border-color: var(--text-muted);
+  color: var(--text);
+}
+
+.lane-file {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text);
+}
+
+/* ---------- Add track ---------- */
+
+.add-track-row {
+  grid-column: 1 / -1;
+}
+
+/* Pinned to the visible width so the button spans the window, not the whole timeline. */
+.add-track {
+  position: sticky;
+  left: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  width: 100cqw;
+  height: 40px;
+  padding: 0;
+  border: none;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  cursor: pointer;
+}
+
+.add-track:hover {
+  background: var(--surface-2);
+  color: var(--text);
+}
+
+/* ---------- Tooltip ---------- */
+
+.tooltip {
+  position: fixed;
+  z-index: 100;
+  max-width: 280px;
+  padding: 7px 9px;
+  border: 1px solid var(--tooltip-border);
+  border-radius: var(--radius);
+  background: var(--tooltip-bg);
+  color: var(--tooltip-text);
+  font-size: 11px;
+  line-height: 1.45;
+  box-shadow: 0 4px 14px rgb(0 0 0 / 0.18);
   pointer-events: none;
+}
+
+.tooltip-heading {
+  font-weight: 600;
+}
+
+.tooltip-line {
+  color: var(--tooltip-muted);
 }
 
 /* ---------- Phone ---------- */
 
 @media (max-width: 600px) {
   :root {
-    --header-width: 200px;
-    --track-height: 112px;
-  }
-
-  .readout-pan,
-  .chip {
-    display: none;
+    --header-width: 220px;
+    --track-height: 104px;
   }
 }
