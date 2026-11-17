@@ -1,0 +1,230 @@
+/// An sRGB colour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Rgb(pub u8, pub u8, pub u8);
+
+/// WCAG relative luminance (0 = black, 1 = white).
+pub fn luminance(c: Rgb) -> f64 {
+    let lin = |v: u8| {
+        let v = v as f64 / 255.0;
+        if v <= 0.03928 {
+            v / 12.92
+        } else {
+            ((v + 0.055) / 1.055).powf(2.4)
+        }
+    };
+    0.2126 * lin(c.0) + 0.7152 * lin(c.1) + 0.0722 * lin(c.2)
+}
+
+/// WCAG contrast ratio, 1.0 (identical) to 21.0 (black on white).
+pub fn contrast_ratio(a: Rgb, b: Rgb) -> f64 {
+    let (la, lb) = (luminance(a), luminance(b));
+    (la.max(lb) + 0.05) / (la.min(lb) + 0.05)
+}
+
+/// Every colour the app uses. Views take colours from here and nowhere else.
+#[derive(Debug, Clone, Copy)]
+pub struct Theme {
+    /// Raised, pressable surfaces.
+    pub surface: Rgb,
+    /// Wells and tracks.
+    pub inset: Rgb,
+    /// The Mashup lane: slightly deeper than a Track lane.
+    pub mashup_surface: Rgb,
+    pub text: Rgb,
+    pub text_muted: Rgb,
+    /// The 1px outline on every interactive control.
+    pub hairline: Rgb,
+    /// Cyan: active, playing or soloed, and nothing else.
+    pub glow: Rgb,
+    pub text_on_glow: Rgb,
+}
+
+impl Theme {
+    pub fn standard() -> Self {
+        Self {
+            surface: Rgb(244, 246, 248),
+            inset: Rgb(230, 234, 239),
+            mashup_surface: Rgb(221, 236, 246),
+            text: Rgb(17, 24, 39),
+            text_muted: Rgb(75, 85, 99),
+            hairline: Rgb(110, 120, 136),
+            glow: Rgb(0, 194, 224),
+            text_on_glow: Rgb(6, 32, 42),
+        }
+    }
+
+    pub fn high_contrast() -> Self {
+        Self {
+            surface: Rgb(255, 255, 255),
+            inset: Rgb(235, 235, 235),
+            mashup_surface: Rgb(225, 235, 245),
+            text: Rgb(0, 0, 0),
+            text_muted: Rgb(51, 51, 51),
+            hairline: Rgb(0, 0, 0),
+            glow: Rgb(0, 229, 255),
+            text_on_glow: Rgb(0, 0, 0),
+        }
+    }
+
+    /// Every (name, foreground, background) pair that carries text.
+    pub fn text_pairs(&self) -> Vec<(&'static str, Rgb, Rgb)> {
+        vec![
+            ("text on surface", self.text, self.surface),
+            ("text on inset", self.text, self.inset),
+            ("text on mashup", self.text, self.mashup_surface),
+            ("muted on surface", self.text_muted, self.surface),
+            ("muted on inset", self.text_muted, self.inset),
+            ("muted on mashup", self.text_muted, self.mashup_surface),
+            ("label on glow", self.text_on_glow, self.glow),
+        ]
+    }
+}
+
+/// Why something wants to glow, most deserving first.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum GlowKind {
+    Playing,
+    Solo,
+    Other,
+}
+
+const MAX_GLOWING: usize = 3;
+
+/// Which of the active items (by index) may glow: at most three, Playing first, then Solo,
+/// then the rest, earlier items winning ties. The others must show "active" another way.
+pub fn glowing(active: &[GlowKind]) -> Vec<usize> {
+    let mut ranked: Vec<usize> = (0..active.len()).collect();
+    ranked.sort_by_key(|&i| active[i]);
+    ranked.truncate(MAX_GLOWING);
+    ranked.sort_unstable();
+    ranked
+}
+
+/// A fill pattern, so Bands differ by more than tint.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Pattern {
+    Solid,
+    Stripes,
+    Dots,
+    Crosshatch,
+    Waves,
+    Checks,
+}
+
+pub fn band_pattern(index: usize) -> Option<Pattern> {
+    [
+        Pattern::Solid,
+        Pattern::Stripes,
+        Pattern::Dots,
+        Pattern::Crosshatch,
+        Pattern::Waves,
+        Pattern::Checks,
+    ]
+    .get(index)
+    .copied()
+}
+
+/// Low/Mid/High for the default three Bands, otherwise "Band N".
+pub fn band_label(index: usize, count: usize) -> String {
+    match (count, index) {
+        (3, 0) => "Low".into(),
+        (3, 1) => "Mid".into(),
+        (3, 2) => "High".into(),
+        _ => format!("Band {}", index + 1),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn contrast_ratio_matches_known_wcag_values() {
+        let (black, white) = (Rgb(0, 0, 0), Rgb(255, 255, 255));
+        assert!((contrast_ratio(black, white) - 21.0).abs() < 1e-9);
+        assert!((contrast_ratio(white, black) - 21.0).abs() < 1e-9);
+        assert!((contrast_ratio(white, white) - 1.0).abs() < 1e-9);
+        // #767676 on white is the classic "just passes AA" grey: 4.54:1.
+        assert!((contrast_ratio(Rgb(0x76, 0x76, 0x76), white) - 4.54).abs() < 0.01);
+        // #777777 on white just fails: 4.48:1.
+        assert!((contrast_ratio(Rgb(0x77, 0x77, 0x77), white) - 4.48).abs() < 0.01);
+    }
+
+    #[test]
+    fn every_text_pair_in_the_standard_theme_meets_4_5_to_1() {
+        for (name, fg, bg) in Theme::standard().text_pairs() {
+            let ratio = contrast_ratio(fg, bg);
+            assert!(ratio >= 4.5, "{name}: {ratio:.2}:1");
+        }
+    }
+
+    #[test]
+    fn the_high_contrast_theme_meets_7_to_1_for_text() {
+        for (name, fg, bg) in Theme::high_contrast().text_pairs() {
+            let ratio = contrast_ratio(fg, bg);
+            assert!(ratio >= 7.0, "{name}: {ratio:.2}:1");
+        }
+    }
+
+    #[test]
+    fn hairlines_stand_out_from_every_surface_they_sit_on() {
+        // WCAG 1.4.11 asks 3:1 for interface component boundaries.
+        for (theme, min) in [(Theme::standard(), 3.0), (Theme::high_contrast(), 4.5)] {
+            for bg in [theme.surface, theme.inset, theme.mashup_surface] {
+                let ratio = contrast_ratio(theme.hairline, bg);
+                assert!(ratio >= min, "hairline on {bg:?}: {ratio:.2}:1");
+            }
+        }
+    }
+
+    #[test]
+    fn the_mashup_lane_is_deeper_than_a_track_lane_but_not_darker_than_text() {
+        let t = Theme::standard();
+        assert_ne!(t.mashup_surface, t.surface);
+        assert!(luminance(t.mashup_surface) < luminance(t.surface));
+    }
+
+    #[test]
+    fn raised_and_inset_surfaces_are_distinct() {
+        for t in [Theme::standard(), Theme::high_contrast()] {
+            assert_ne!(t.surface, t.inset);
+        }
+    }
+
+    #[test]
+    fn at_most_three_items_glow_and_playing_beats_solo_beats_the_rest() {
+        use GlowKind::*;
+        // indices:   0      1     2     3      4
+        let active = [Other, Solo, Playing, Solo, Solo];
+        assert_eq!(glowing(&active), vec![1, 2, 3]);
+    }
+
+    #[test]
+    fn ties_keep_the_earlier_item_and_fewer_than_three_all_glow() {
+        use GlowKind::*;
+        assert_eq!(glowing(&[Other, Other, Other, Other]), vec![0, 1, 2]);
+        assert_eq!(glowing(&[Solo, Playing]), vec![0, 1]);
+        assert_eq!(glowing(&[]), Vec::<usize>::new());
+    }
+
+    #[test]
+    fn every_band_up_to_six_has_its_own_pattern_and_a_seventh_has_none() {
+        let patterns: Vec<_> = (0..6).map(|i| band_pattern(i).unwrap()).collect();
+        for (i, a) in patterns.iter().enumerate() {
+            for b in &patterns[i + 1..] {
+                assert_ne!(a, b);
+            }
+        }
+        assert_eq!(band_pattern(6), None);
+    }
+
+    #[test]
+    fn three_bands_are_called_low_mid_high_and_other_counts_are_numbered() {
+        assert_eq!(band_label(0, 3), "Low");
+        assert_eq!(band_label(1, 3), "Mid");
+        assert_eq!(band_label(2, 3), "High");
+        assert_eq!(band_label(0, 4), "Band 1");
+        assert_eq!(band_label(3, 4), "Band 4");
+        assert_eq!(band_label(5, 6), "Band 6");
+    }
+}
