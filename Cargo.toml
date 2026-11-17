@@ -1,0 +1,9 @@
+[package]
+name = "audiobrew"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = "1"
+# runtime_shaders: the Xcode Metal Toolchain component is not installed, so shaders compile at runtime.
+gpui = { version = "0.2.2", features = ["runtime_shaders"] }
