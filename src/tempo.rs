@@ -24,6 +24,9 @@ pub fn suggest_bpm_fix(track_bpm: f64, mashup_bpm: f64) -> Option<BpmFix> {
     if within_stretch_limits(speed_factor(track_bpm * 2.0, mashup_bpm)) {
         return Some(BpmFix::Double);
     }
+    if within_stretch_limits(speed_factor(track_bpm / 2.0, mashup_bpm)) {
+        return Some(BpmFix::Half);
+    }
     None
 }
 
@@ -35,6 +38,17 @@ mod tests {
     fn suggests_doubling_when_detected_tempo_is_half_the_mashup_tempo() {
         // 60 vs 120 needs 2.0x (out of limits); doubling 60 -> 120 needs 1.0x.
         assert_eq!(suggest_bpm_fix(60.0, 120.0), Some(BpmFix::Double));
+    }
+
+    #[test]
+    fn suggests_halving_when_detected_tempo_is_double_the_mashup_tempo() {
+        // 240 vs 120 needs 0.5x (out of limits); halving 240 -> 120 needs 1.0x.
+        assert_eq!(suggest_bpm_fix(240.0, 120.0), Some(BpmFix::Half));
+    }
+
+    #[test]
+    fn no_suggestion_when_the_stretch_is_already_fine() {
+        assert_eq!(suggest_bpm_fix(110.0, 120.0), None);
     }
 
     #[test]
