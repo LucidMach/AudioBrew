@@ -15,9 +15,21 @@ pub fn effective_gains(bands: &[BandState]) -> Vec<f32> {
         .collect()
 }
 
+/// The Mashup limiter: output never exceeds full scale (+/-1.0), so summed Tracks cannot clip.
+pub fn limit(sample: f32) -> f32 {
+    sample.clamp(-1.0, 1.0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_limiter_keeps_the_sum_within_full_scale() {
+        assert_eq!(limit(1.5), 1.0);
+        assert_eq!(limit(-1.5), -1.0);
+        assert_eq!(limit(0.5), 0.5);
+    }
 
     fn band(gain: f32, mute: bool, solo: bool) -> BandState {
         BandState { gain, mute, solo }
