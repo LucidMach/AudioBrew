@@ -1,3 +1,4 @@
+pub mod analysis;
 pub mod bands;
 pub mod crossover;
 pub mod first_run;
