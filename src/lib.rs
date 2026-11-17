@@ -10,6 +10,7 @@ pub mod import;
 pub mod key;
 pub mod load;
 pub mod mix;
+pub mod pipeline;
 pub mod project;
 pub mod ramp;
 pub mod readout;
