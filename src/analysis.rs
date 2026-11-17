@@ -1,11 +1,6 @@
 /// Estimates the tempo in BPM of mono `samples`, or `None` if there is no usable pulse.
 pub fn estimate_tempo(samples: &[f32], sample_rate: u32) -> Option<f64> {
-    // Smoothing widens each onset into a small bump, so two beats that are not an exact
-    // whole number of frames apart still line up when autocorrelated.
-    let flux = smooth(
-        &smooth(&onset_strength(samples, HOP), SMOOTH_RADIUS),
-        SMOOTH_RADIUS,
-    );
+    let flux = onset_envelope(samples);
     let frames_per_sec = sample_rate as f64 / HOP as f64;
     let lag_min = (60.0 / MAX_BPM * frames_per_sec).floor() as usize;
     let lag_max = (60.0 / MIN_BPM * frames_per_sec).ceil() as usize;
@@ -23,6 +18,83 @@ pub fn estimate_tempo(samples: &[f32], sample_rate: u32) -> Option<f64> {
         return None;
     }
     Some(60.0 * frames_per_sec / best_lag as f64)
+}
+
+/// A tempo and where each beat falls.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Beats {
+    pub bpm: f64,
+    /// Time of every detected beat, in seconds from the start of the audio.
+    pub times_secs: Vec<f64>,
+}
+
+/// Finds the tempo and the time of every beat in mono `samples`.
+pub fn track_beats(samples: &[f32], sample_rate: u32) -> Option<Beats> {
+    let bpm = estimate_tempo(samples, sample_rate)?;
+    let flux = onset_envelope(samples);
+    let frames_per_sec = sample_rate as f64 / HOP as f64;
+    let period = 60.0 * frames_per_sec / bpm; // beat period in frames
+
+    let mean = flux.iter().sum::<f64>() / flux.len() as f64;
+    if mean <= 0.0 {
+        return None;
+    }
+    let strength: Vec<f64> = flux.iter().map(|f| f / mean).collect();
+
+    let times_secs = beat_chain(&strength, period)
+        .into_iter()
+        .map(|frame| frame_to_secs(frame, sample_rate))
+        .collect();
+    Some(Beats { bpm, times_secs })
+}
+
+/// The seconds at which an onset that peaks at envelope `frame` actually occurred. Spectral flux
+/// peaks when a sound is three quarters of the way across the FFT window.
+fn frame_to_secs(frame: usize, sample_rate: u32) -> f64 {
+    (frame * HOP + FFT_SIZE * 3 / 4) as f64 / sample_rate as f64
+}
+
+/// How strongly to penalise a beat gap that differs from the beat period (per squared log-ratio).
+const TIGHTNESS: f64 = 100.0;
+
+/// Dynamic programming (Ellis 2007): choose the chain of frames that collects the most onset
+/// strength while keeping each gap close to `period` frames. Returns the chosen frames in order.
+fn beat_chain(strength: &[f64], period: f64) -> Vec<usize> {
+    let n = strength.len();
+    let min_gap = (period / 2.0).ceil() as usize;
+    let max_gap = (period * 2.0).floor() as usize;
+
+    let mut best_total = strength.to_vec();
+    let mut previous: Vec<Option<usize>> = vec![None; n];
+    for t in 0..n {
+        let mut best: Option<(f64, usize)> = None;
+        for gap in min_gap..=max_gap.min(t) {
+            let from = t - gap;
+            let penalty = TIGHTNESS * (gap as f64 / period).ln().powi(2);
+            let score = best_total[from] - penalty;
+            if score > 0.0 && best.is_none_or(|(b, _)| score > b) {
+                best = Some((score, from));
+            }
+        }
+        if let Some((score, from)) = best {
+            best_total[t] += score;
+            previous[t] = Some(from);
+        }
+    }
+
+    // The last beat is the best-scoring frame within one period of the end.
+    let tail_start = n.saturating_sub(period.ceil() as usize);
+    let Some(mut frame) = (tail_start..n).max_by(|&a, &b| best_total[a].total_cmp(&best_total[b]))
+    else {
+        return Vec::new();
+    };
+    let mut chain = vec![frame];
+    while let Some(from) = previous[frame] {
+        chain.push(from);
+        frame = from;
+    }
+    chain.reverse();
+    chain
 }
 
 /// Tempo search range. Anything outside it is folded in by the caller as half/double time.
@@ -50,6 +122,16 @@ fn smooth(envelope: &[f64], radius: usize) -> Vec<f64> {
 fn tempo_prior(bpm: f64) -> f64 {
     let octaves_from_120 = (bpm / 120.0).log2();
     (-0.5 * (octaves_from_120 / 3.0).powi(2)).exp()
+}
+
+/// The smoothed onset-strength envelope, one value per `HOP` samples. Smoothing widens each
+/// onset into a small bump, so two beats that are not an exact whole number of frames apart
+/// still line up.
+fn onset_envelope(samples: &[f32]) -> Vec<f64> {
+    smooth(
+        &smooth(&onset_strength(samples, HOP), SMOOTH_RADIUS),
+        SMOOTH_RADIUS,
+    )
 }
 
 /// FFT window length in samples (about 46 ms at 44.1 kHz).
@@ -129,10 +211,15 @@ mod tests {
 
     /// Silence with a short decaying click on every beat, so the true tempo is exactly `bpm`.
     fn click_track(bpm: f64, secs: f64) -> Vec<f32> {
+        click_track_from(bpm, secs, 0.0)
+    }
+
+    /// Like `click_track`, but the first click is at `first_click_secs`.
+    fn click_track_from(bpm: f64, secs: f64, first_click_secs: f64) -> Vec<f32> {
         let mut samples = vec![0.0; (secs * SAMPLE_RATE as f64) as usize];
         let beat_secs = 60.0 / bpm;
         let click_len = (0.01 * SAMPLE_RATE as f64) as usize; // 10 ms
-        let mut beat = 0.0;
+        let mut beat = first_click_secs;
         while beat < secs {
             let start = (beat * SAMPLE_RATE as f64) as usize;
             for i in 0..click_len.min(samples.len().saturating_sub(start)) {
@@ -150,6 +237,26 @@ mod tests {
         [truth, truth / 2.0, truth * 2.0]
             .iter()
             .any(|t| (estimate - t).abs() <= 1.0)
+    }
+
+    #[test]
+    fn every_beat_of_a_click_track_is_found_at_its_true_time() {
+        // 120 BPM, first click at 0.25 s: clicks at 0.25, 0.75, 1.25, ...
+        let samples = click_track_from(120.0, 12.0, 0.25);
+
+        let beats = track_beats(&samples, SAMPLE_RATE).expect("a steady pulse has beats");
+
+        let truth: Vec<f64> = (0..24).map(|k| 0.25 + 0.5 * k as f64).collect();
+        assert!((beats.bpm - 120.0).abs() <= 1.0, "bpm {}", beats.bpm);
+        for t in &truth {
+            let nearest = beats
+                .times_secs
+                .iter()
+                .map(|b| (b - t).abs())
+                .fold(f64::INFINITY, f64::min);
+            assert!(nearest <= 0.015, "no beat within 15 ms of {t:.2}s (nearest {nearest:.3}s)");
+        }
+        assert_eq!(beats.times_secs.len(), truth.len(), "{:?}", beats.times_secs);
     }
 
     #[test]
