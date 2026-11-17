@@ -12,6 +12,7 @@ pub struct BandConfig {
 #[derive(Debug, PartialEq, Eq)]
 pub enum BandError {
     TooManyBands,
+    InvalidCrossover,
 }
 
 impl Default for BandConfig {
@@ -28,6 +29,18 @@ impl BandConfig {
         }
         let at = self.crossovers.partition_point(|&c| c < hz);
         self.crossovers.insert(at, hz);
+        Ok(())
+    }
+
+    /// Moves the boundary between Band `index` and Band `index + 1`.
+    /// It may not cross a neighbouring boundary or leave the audible range.
+    pub fn move_crossover(&mut self, index: usize, hz: f64) -> Result<(), BandError> {
+        let lower = if index == 0 { MIN_HZ } else { self.crossovers[index - 1] };
+        let upper = self.crossovers.get(index + 1).copied().unwrap_or(MAX_HZ);
+        if hz <= lower || hz >= upper {
+            return Err(BandError::InvalidCrossover);
+        }
+        self.crossovers[index] = hz;
         Ok(())
     }
 
@@ -59,6 +72,29 @@ mod tests {
                 (1_000.0, 4_000.0),
                 (4_000.0, 20_000.0)
             ]
+        );
+    }
+
+    #[test]
+    fn dragging_a_crossover_resizes_the_two_bands_either_side() {
+        let mut bands = BandConfig::default();
+
+        bands.move_crossover(0, 500.0).unwrap();
+
+        assert_eq!(
+            bands.ranges(),
+            vec![(20.0, 500.0), (500.0, 4_000.0), (4_000.0, 20_000.0)]
+        );
+    }
+
+    #[test]
+    fn a_crossover_cannot_be_dragged_past_its_neighbour() {
+        let mut bands = BandConfig::default();
+
+        assert_eq!(bands.move_crossover(0, 5_000.0), Err(BandError::InvalidCrossover));
+        assert_eq!(
+            bands.ranges(),
+            vec![(20.0, 300.0), (300.0, 4_000.0), (4_000.0, 20_000.0)]
         );
     }
 
