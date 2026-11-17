@@ -23,6 +23,9 @@ pub struct Span {
 #[derive(Debug, Clone, PartialEq)]
 pub struct ClipView {
     pub clip: Span,
+    /// The clip's width if the End marker did not cut it off, so a waveform can show just the
+    /// visible fraction.
+    pub full_w: f64,
     pub repeats: Vec<Span>,
 }
 
@@ -94,6 +97,7 @@ pub fn timeline_view(project: &Project, geo: Geometry) -> TimelineView {
                 .collect();
             Some(ClipView {
                 clip: Span { x: at(p.offset_secs), w: visible.max(0.0) * px_per_sec },
+                full_w: p.length_secs * px_per_sec,
                 repeats,
             })
         })
@@ -173,6 +177,7 @@ mod tests {
         assert_eq!(v.end_x, 1050.0);
         let first = v.lanes[0].as_ref().unwrap();
         assert_eq!(first.clip, Span { x: 50.0, w: 1000.0 });
+        assert_eq!(first.full_w, 1000.0);
         assert!(first.repeats.is_empty());
         let second = v.lanes[1].as_ref().unwrap();
         assert_eq!(second.clip, Span { x: 50.0, w: 800.0 });
@@ -238,7 +243,10 @@ mod tests {
 
         assert_eq!(v.px_per_sec, 250.0);
         assert_eq!(v.end_x, 1050.0);
-        assert_eq!(v.lanes[0].as_ref().unwrap().clip, Span { x: 50.0, w: 1000.0 });
+        let clip = v.lanes[0].as_ref().unwrap();
+        assert_eq!(clip.clip, Span { x: 50.0, w: 1000.0 });
+        // Untrimmed it would be 10 s = 2500 px wide; only the first 40% of it is visible.
+        assert_eq!(clip.full_w, 2500.0);
     }
 
     #[test]
