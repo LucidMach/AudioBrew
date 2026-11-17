@@ -49,11 +49,18 @@ const MINOR_PROFILE: [f64; 12] = [
 /// semitone, since a semitone near 100 Hz is only about 6 Hz wide.
 const KEY_FFT_SIZE: usize = 16_384;
 const KEY_HOP: usize = 8_192;
+/// Spectral magnitudes are raised to this power before summing, so a few loud partials do not
+/// outweigh many quiet ones (1.0 = no compression).
+const MAGNITUDE_EXPONENT: f64 = 2.0;
 /// Frequency range, in Hz, whose energy counts towards pitch classes.
 const PITCH_RANGE_HZ: (f64, f64) = (65.0, 2_100.0);
 
+/// Tuning offsets tried, in semitones (0.2 = 20 cents sharp of A = 440 Hz).
+const TUNING_OFFSETS: [f64; 5] = [-0.4, -0.2, 0.0, 0.2, 0.4];
+
 /// Total spectral magnitude in each of the 12 pitch classes (0 = C), or `None` if the audio is
-/// too short or silent.
+/// too short or silent. The audio may be tuned a little off A = 440 Hz, so the tuning offset that
+/// concentrates the energy into the fewest pitch classes is used.
 fn chromagram(samples: &[f32], sample_rate: u32) -> Option<[f64; 12]> {
     use realfft::RealFftPlanner;
 
@@ -67,21 +74,8 @@ fn chromagram(samples: &[f32], sample_rate: u32) -> Option<[f64; 12]> {
     let mut input = vec![0.0f32; KEY_FFT_SIZE];
     let mut spectrum = fft.make_output_vec();
 
-    // Pitch class of each FFT bin, or `None` outside the pitch range.
-    let bin_hz = sample_rate as f64 / KEY_FFT_SIZE as f64;
-    let classes: Vec<Option<usize>> = (0..spectrum.len())
-        .map(|bin| {
-            let hz = bin as f64 * bin_hz;
-            (PITCH_RANGE_HZ.0..=PITCH_RANGE_HZ.1)
-                .contains(&hz)
-                .then(|| {
-                    let midi = 69.0 + 12.0 * (hz / 440.0).log2();
-                    (midi.round() as i64).rem_euclid(12) as usize
-                })
-        })
-        .collect();
-
-    let mut chroma = [0.0f64; 12];
+    // Energy in each FFT bin, summed over all frames.
+    let mut bin_energy = vec![0.0f64; spectrum.len()];
     for start in (0..=samples.len() - KEY_FFT_SIZE).step_by(KEY_HOP) {
         for (i, slot) in input.iter_mut().enumerate() {
             *slot = samples[start + i] * window[i];
@@ -89,12 +83,32 @@ fn chromagram(samples: &[f32], sample_rate: u32) -> Option<[f64; 12]> {
         fft.process(&mut input, &mut spectrum)
             .expect("buffer lengths match the planned FFT");
         for (bin, value) in spectrum.iter().enumerate() {
-            if let Some(pc) = classes[bin] {
-                chroma[pc] += value.norm() as f64;
-            }
+            bin_energy[bin] += (value.norm() as f64).powf(MAGNITUDE_EXPONENT);
         }
     }
-    (chroma.iter().sum::<f64>() > 1e-6).then_some(chroma)
+
+    let bin_hz = sample_rate as f64 / KEY_FFT_SIZE as f64;
+    let fold = |tuning: f64| {
+        let mut chroma = [0.0f64; 12];
+        for (bin, energy) in bin_energy.iter().enumerate() {
+            let hz = bin as f64 * bin_hz;
+            if (PITCH_RANGE_HZ.0..=PITCH_RANGE_HZ.1).contains(&hz) {
+                let midi = 69.0 + 12.0 * (hz / 440.0).log2() - tuning;
+                chroma[(midi.round() as i64).rem_euclid(12) as usize] += energy;
+            }
+        }
+        chroma
+    };
+    // Concentration: the sum of squares is largest when the energy sits in few pitch classes.
+    let concentration = |c: &[f64; 12]| {
+        let total: f64 = c.iter().sum();
+        if total <= 0.0 { 0.0 } else { c.iter().map(|v| (v / total).powi(2)).sum::<f64>() }
+    };
+    let best = TUNING_OFFSETS
+        .iter()
+        .map(|&t| fold(t))
+        .max_by(|a, b| concentration(a).total_cmp(&concentration(b)))?;
+    (best.iter().sum::<f64>() > 1e-6).then_some(best)
 }
 
 /// Pearson correlation of two equal-length vectors (0 if either is constant).
