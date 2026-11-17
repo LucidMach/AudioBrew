@@ -1,4 +1,5 @@
-use crate::detect::detect;
+use crate::detect::{detect, to_mono};
+use crate::keydetect::detect_key;
 use crate::first_run::{TrackInput, plan_first_run};
 use crate::pipeline::Loader;
 use crate::project::{LoadedTrack, Project, ProjectError};
@@ -23,7 +24,7 @@ pub fn analyze_source(
         track: LoadedTrack {
             source: source.to_string(),
             bpm: found.bpm,
-            key: None,
+            key: detect_key(&to_mono(&audio), audio.sample_rate),
             length_secs: found.length_secs,
             offset_beats: 0.0,
             ..Default::default()
@@ -73,7 +74,10 @@ mod tests {
 
     impl Loader for FakeLoader {
         fn load(&self, source: &str, _device_rate: u32) -> Result<Stereo, String> {
-            self.0.get(source).cloned().ok_or_else(|| format!("{source}: not found"))
+            self.0
+                .get(source)
+                .cloned()
+                .ok_or_else(|| format!("{source}: not found"))
         }
     }
 
@@ -92,11 +96,52 @@ mod tests {
             }
             beat += 60.0 / bpm;
         }
-        Stereo { samples, sample_rate: RATE }
+        Stereo {
+            samples,
+            sample_rate: RATE,
+        }
     }
 
     fn loader(files: &[(&str, Stereo)]) -> FakeLoader {
-        FakeLoader(files.iter().map(|(n, s)| (n.to_string(), s.clone())).collect())
+        FakeLoader(
+            files
+                .iter()
+                .map(|(n, s)| (n.to_string(), s.clone()))
+                .collect(),
+        )
+    }
+
+    /// Stereo audio of a C major I-IV-V-I progression (sine tones with harmonics), 2.5 s a chord.
+    fn c_major_harmony() -> Stereo {
+        let chords: [[i32; 3]; 4] = [[48, 52, 55], [53, 57, 60], [55, 59, 62], [48, 52, 55]];
+        let mut mono = Vec::new();
+        for chord in chords {
+            let frames = (2.5 * RATE as f64) as usize;
+            let mut block = vec![0.0f32; frames];
+            for note in chord {
+                let freq = 440.0 * 2f64.powf((note as f64 - 69.0) / 12.0);
+                for harmonic in 1..=4 {
+                    let amp = 0.15 / harmonic as f64;
+                    for (i, sample) in block.iter_mut().enumerate() {
+                        let t = i as f64 / RATE as f64;
+                        *sample += (amp * (std::f64::consts::TAU * freq * harmonic as f64 * t).sin()) as f32;
+                    }
+                }
+            }
+            mono.extend(block);
+        }
+        Stereo { samples: mono.iter().flat_map(|&v| [v, v]).collect(), sample_rate: RATE }
+    }
+
+    #[test]
+    fn analysing_a_source_fills_in_its_key_for_the_key_badge() {
+        use crate::key::Key;
+        let loader = loader(&[("pad.wav", c_major_harmony())]);
+
+        let analyzed = analyze_source(&loader, "pad.wav", RATE).expect("the file loads");
+
+        // C major is 8B on the Camelot wheel.
+        assert_eq!(analyzed.track.key, Some(Key { number: 8, minor: false }));
     }
 
     #[test]
@@ -137,7 +182,11 @@ mod tests {
         let landed = project.offset_secs(1).unwrap() + 0.10 / factor;
         let bar = 4.0 * 60.0 / 100.0;
         let off = (landed - 0.25).rem_euclid(bar);
-        assert!(off.min(bar - off) <= 0.02, "downbeats are {:.0} ms apart", off.min(bar - off) * 1000.0);
+        assert!(
+            off.min(bar - off) <= 0.02,
+            "downbeats are {:.0} ms apart",
+            off.min(bar - off) * 1000.0
+        );
     }
 
     #[test]
@@ -172,7 +221,11 @@ mod tests {
         let bpm = analyzed.track.bpm.expect("a steady pulse has a tempo");
         assert!((bpm - 120.0).abs() <= 1.0, "bpm {bpm}");
         assert!((analyzed.track.length_secs - 12.0).abs() < 1e-6);
-        assert!((analyzed.downbeat_secs - 0.25).abs() <= 0.015, "downbeat {}", analyzed.downbeat_secs);
+        assert!(
+            (analyzed.downbeat_secs - 0.25).abs() <= 0.015,
+            "downbeat {}",
+            analyzed.downbeat_secs
+        );
         assert_eq!(analyzed.track.offset_beats, 0.0);
     }
 }

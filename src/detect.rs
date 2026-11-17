@@ -2,23 +2,36 @@ use crate::analysis::track_beats;
 use crate::first_run::TrackInput;
 use crate::import::Stereo;
 
-/// Runs tempo and beat detection on a loaded file and returns what `first_run` needs.
-/// With no detectable pulse, `bpm` is `None` and the downbeat is at the start.
-pub fn detect(audio: &Stereo) -> TrackInput {
-    let mono: Vec<f32> = audio
+/// Averages the left and right channels into one, which is what the analysers work on.
+pub fn to_mono(audio: &Stereo) -> Vec<f32> {
+    audio
         .samples
         .chunks_exact(2)
         .map(|frame| 0.5 * (frame[0] + frame[1]))
-        .collect();
+        .collect()
+}
+
+/// Runs tempo and beat detection on a loaded file and returns what `first_run` needs.
+/// With no detectable pulse, `bpm` is `None` and the downbeat is at the start.
+pub fn detect(audio: &Stereo) -> TrackInput {
+    let mono = to_mono(audio);
     let length_secs = mono.len() as f64 / audio.sample_rate.max(1) as f64;
 
     match track_beats(&mono, audio.sample_rate) {
         Some(beats) => TrackInput {
             bpm: Some(beats.bpm),
             length_secs,
-            downbeat_secs: beats.times_secs.get(beats.downbeat_offset).copied().unwrap_or(0.0),
+            downbeat_secs: beats
+                .times_secs
+                .get(beats.downbeat_offset)
+                .copied()
+                .unwrap_or(0.0),
         },
-        None => TrackInput { bpm: None, length_secs, downbeat_secs: 0.0 },
+        None => TrackInput {
+            bpm: None,
+            length_secs,
+            downbeat_secs: 0.0,
+        },
     }
 }
 
@@ -43,12 +56,18 @@ mod tests {
             }
             beat += 60.0 / bpm;
         }
-        Stereo { samples, sample_rate: RATE }
+        Stereo {
+            samples,
+            sample_rate: RATE,
+        }
     }
 
     #[test]
     fn silence_has_no_tempo_so_the_track_is_flagged_not_guessed() {
-        let silence = Stereo { samples: vec![0.0; 2 * RATE as usize * 8], sample_rate: RATE };
+        let silence = Stereo {
+            samples: vec![0.0; 2 * RATE as usize * 8],
+            sample_rate: RATE,
+        };
 
         let input = detect(&silence);
 
@@ -63,7 +82,10 @@ mod tests {
         use crate::grid::beats_to_secs;
 
         // Track 1: 100 BPM, first click at 0.25 s. Track 2: 120 BPM, first click at 0.10 s.
-        let tracks = [stereo_clicks(100.0, 16.0, 0.25), stereo_clicks(120.0, 16.0, 0.10)];
+        let tracks = [
+            stereo_clicks(100.0, 16.0, 0.25),
+            stereo_clicks(120.0, 16.0, 0.10),
+        ];
 
         let inputs: Vec<_> = tracks.iter().map(detect).collect();
         let plan = plan_first_run(&inputs).expect("two files make a plan");
@@ -71,16 +93,24 @@ mod tests {
         // The Mashup takes the first Track's tempo; the second slows by 100/120.
         let mashup = plan.mashup_bpm.expect("a tempo was detected");
         assert!((mashup - 100.0).abs() <= 1.0, "mashup bpm {mashup}");
-        assert!((plan.tracks[1].factor - 100.0 / 120.0).abs() < 0.02, "factor {}", plan.tracks[1].factor);
+        assert!(
+            (plan.tracks[1].factor - 100.0 / 120.0).abs() < 0.02,
+            "factor {}",
+            plan.tracks[1].factor
+        );
         assert!(!plan.tracks[1].warn);
 
         // After stretching and offsetting, Track 2's first click (true time 0.10 s) must land on
         // one of Track 1's bar lines (its first click is at 0.25 s; a bar is 4 beats = 2.4 s).
-        let landed = beats_to_secs(plan.tracks[1].offset_beats, mashup)
-            + 0.10 / plan.tracks[1].factor;
+        let landed =
+            beats_to_secs(plan.tracks[1].offset_beats, mashup) + 0.10 / plan.tracks[1].factor;
         let bar = 4.0 * 60.0 / 100.0;
         let off = (landed - 0.25).rem_euclid(bar);
-        assert!(off.min(bar - off) <= 0.02, "downbeats are {:.0} ms apart", off.min(bar - off) * 1000.0);
+        assert!(
+            off.min(bar - off) <= 0.02,
+            "downbeats are {:.0} ms apart",
+            off.min(bar - off) * 1000.0
+        );
     }
 
     #[test]
@@ -91,7 +121,15 @@ mod tests {
 
         let bpm = input.bpm.expect("a steady pulse has a tempo");
         assert!((bpm - 120.0).abs() <= 1.0, "bpm {bpm}");
-        assert!((input.length_secs - 12.0).abs() < 1e-6, "length {}", input.length_secs);
-        assert!((input.downbeat_secs - 0.25).abs() <= 0.015, "downbeat {}", input.downbeat_secs);
+        assert!(
+            (input.length_secs - 12.0).abs() < 1e-6,
+            "length {}",
+            input.length_secs
+        );
+        assert!(
+            (input.downbeat_secs - 0.25).abs() <= 0.015,
+            "downbeat {}",
+            input.downbeat_secs
+        );
     }
 }
