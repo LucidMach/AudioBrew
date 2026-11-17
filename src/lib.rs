@@ -5,5 +5,6 @@ pub mod history;
 pub mod key;
 pub mod mix;
 pub mod project;
+pub mod render;
 pub mod tempo;
 pub mod timeline;
