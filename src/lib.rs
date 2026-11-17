@@ -6,6 +6,8 @@ pub mod history;
 pub mod key;
 pub mod mix;
 pub mod project;
+pub mod ramp;
 pub mod render;
 pub mod tempo;
 pub mod timeline;
+pub mod transport;
