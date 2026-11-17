@@ -16,7 +16,7 @@ pub fn estimate_tempo(samples: &[f32], sample_rate: u32) -> Option<f64> {
     let (best_lag, best_score) = (lag_min..=lag_max)
         .map(|lag| {
             let bpm = 60.0 * frames_per_sec / lag as f64;
-            (lag, autocorrelation(&flux, lag) * tempo_prior(bpm))
+            (lag, comb_score(&flux, lag) * tempo_prior(bpm))
         })
         .max_by(|a, b| a.1.total_cmp(&b.1))?;
     if best_score <= 0.0 {
@@ -45,11 +45,11 @@ fn smooth(envelope: &[f64], radius: usize) -> Vec<f64> {
         .collect()
 }
 
-/// A gentle preference for tempos near 120 BPM (log-Gaussian, 1.4 octaves wide), so a
+/// A very gentle preference for tempos near 120 BPM (log-Gaussian, 3 octaves wide), so a
 /// pulse that fits both a tempo and its half or double picks the more common one.
 fn tempo_prior(bpm: f64) -> f64 {
     let octaves_from_120 = (bpm / 120.0).log2();
-    (-0.5 * (octaves_from_120 / 1.4).powi(2)).exp()
+    (-0.5 * (octaves_from_120 / 3.0).powi(2)).exp()
 }
 
 /// How much new energy arrives in each `hop`-sized block: the half-wave rectified
@@ -63,6 +63,20 @@ fn onset_strength(samples: &[f32], hop: usize) -> Vec<f64> {
         .windows(2)
         .map(|pair| (pair[1] - pair[0]).max(0.0))
         .collect()
+}
+
+/// How many whole beats of repetition a candidate beat period must show.
+const COMB_BEATS: usize = 4;
+
+/// Average strength with which the envelope repeats at 1, 2, 3 and 4 beat periods. A true beat
+/// repeats at every multiple; an off-beat or dotted pulse (2:3 or 3:2 of the beat) does not.
+fn comb_score(envelope: &[f64], lag: usize) -> f64 {
+    let scores: Vec<f64> = (1..=COMB_BEATS)
+        .map(|k| k * lag)
+        .filter(|&l| l < envelope.len())
+        .map(|l| autocorrelation(envelope, l) / (envelope.len() - l) as f64)
+        .collect();
+    scores.iter().sum::<f64>() / scores.len().max(1) as f64
 }
 
 /// How strongly the envelope repeats itself `lag` frames later.
@@ -113,7 +127,10 @@ mod tests {
             let estimate = estimate_tempo(&samples, SAMPLE_RATE)
                 .unwrap_or_else(|| panic!("{bpm} BPM click track has a tempo"));
 
-            assert!((estimate - bpm).abs() <= 1.0, "{bpm} BPM estimated as {estimate}");
+            assert!(
+                (estimate - bpm).abs() <= 1.0,
+                "{bpm} BPM estimated as {estimate}"
+            );
         }
     }
 
@@ -124,7 +141,10 @@ mod tests {
 
         let estimate = estimate_tempo(&samples, SAMPLE_RATE).expect("a steady pulse has a tempo");
 
-        assert!(matches_up_to_octave(estimate, 180.0), "estimated {estimate} BPM");
+        assert!(
+            matches_up_to_octave(estimate, 180.0),
+            "estimated {estimate} BPM"
+        );
     }
 
     #[test]
