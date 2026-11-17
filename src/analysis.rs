@@ -57,7 +57,7 @@ pub fn track_beats(samples: &[f32], sample_rate: u32) -> Option<Beats> {
         if starts_on_beat {
             FIRST_BEAT_BONUS
         } else {
-            0.0
+            TIE_BREAK_BONUS
         },
     );
     let times_secs = frames
@@ -96,6 +96,10 @@ fn band_strength(samples: &[f32], sample_rate: u32, lo_hz: f64, hi_hz: f64) -> V
 /// Strong enough to break ties on unaccented music, weak enough that a clear accent still wins
 /// (1.5 lets the prior override it).
 const FIRST_BEAT_BONUS: f64 = 1.0;
+
+/// Small bonus for the first beat when nothing else distinguishes the phases (an unaccented
+/// pulse), so the answer is the first beat rather than whichever phase noise favours.
+const TIE_BREAK_BONUS: f64 = 0.2;
 
 /// Beats per bar assumed when grouping beats into bars.
 const BEATS_PER_BAR: usize = 4;

@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod bands;
 pub mod crossover;
+pub mod detect;
 pub mod device;
 pub mod engine;
 pub mod first_run;
