@@ -17,13 +17,25 @@ pub enum BpmFix {
 
 /// Suggests halving or doubling the detected BPM, but only when the current
 /// speed factor is out of limits and the correction brings it back in.
-pub fn suggest_bpm_fix(_track_bpm: f64, _mashup_bpm: f64) -> Option<BpmFix> {
+pub fn suggest_bpm_fix(track_bpm: f64, mashup_bpm: f64) -> Option<BpmFix> {
+    if within_stretch_limits(speed_factor(track_bpm, mashup_bpm)) {
+        return None;
+    }
+    if within_stretch_limits(speed_factor(track_bpm * 2.0, mashup_bpm)) {
+        return Some(BpmFix::Double);
+    }
     None
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn suggests_doubling_when_detected_tempo_is_half_the_mashup_tempo() {
+        // 60 vs 120 needs 2.0x (out of limits); doubling 60 -> 120 needs 1.0x.
+        assert_eq!(suggest_bpm_fix(60.0, 120.0), Some(BpmFix::Double));
+    }
 
     #[test]
     fn stretch_beyond_0_7x_to_1_4x_is_out_of_limits() {
