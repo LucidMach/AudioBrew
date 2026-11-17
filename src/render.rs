@@ -61,6 +61,31 @@ pub fn mix_into(
     }
 }
 
+/// One audio-callback block starting at Playhead frame `start`. With `looping`, a block that
+/// reaches the End marker continues from frame 0 in the same block, so the seam has no gap.
+/// Does not allocate.
+pub fn mix_block(
+    out: &mut [f32],
+    start: i64,
+    end: i64,
+    looping: bool,
+    tracks: &[RenderTrack],
+    audition: Option<usize>,
+) {
+    if !looping || end <= 0 {
+        mix_into(out, start, end, tracks, audition);
+        return;
+    }
+    let mut pos = start.rem_euclid(end);
+    let mut written = 0;
+    while written < out.len() {
+        let n = ((end - pos) as usize).min(out.len() - written);
+        mix_into(&mut out[written..written + n], pos, end, tracks, audition);
+        written += n;
+        pos = 0;
+    }
+}
+
 /// The whole Mashup from frame 0 up to the End marker.
 pub fn render_mashup(tracks: &[RenderTrack], end: i64, audition: Option<usize>) -> Vec<f32> {
     let mut out = vec![0.0; end.max(0) as usize];
