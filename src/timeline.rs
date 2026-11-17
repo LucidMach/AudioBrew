@@ -14,6 +14,12 @@ pub fn mashup_length_secs(tracks: &[Placement]) -> f64 {
         .fold(0.0, f64::max)
 }
 
+/// Where the Mashup ends: the user's End marker if they dragged it,
+/// otherwise where the longest Track ends.
+pub fn end_marker_secs(tracks: &[Placement], user_set_secs: Option<f64>) -> f64 {
+    user_set_secs.unwrap_or_else(|| mashup_length_secs(tracks))
+}
+
 /// Times (in Mashup seconds) where a repeating Track starts a new pass,
 /// up to but not including the end marker.
 pub fn repeat_seams_secs(track: Placement, end_marker_secs: f64) -> Vec<f64> {
@@ -29,6 +35,17 @@ pub fn repeat_seams_secs(track: Placement, end_marker_secs: f64) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn dragged_end_marker_overrides_the_longest_track_default() {
+        let tracks = [
+            Placement { length_secs: 10.0, offset_secs: 0.0 },
+            Placement { length_secs: 8.0, offset_secs: 5.0 },
+        ];
+
+        assert_eq!(end_marker_secs(&tracks, None), 13.0);
+        assert_eq!(end_marker_secs(&tracks, Some(6.0)), 6.0);
+    }
 
     #[test]
     fn repeating_track_starts_a_new_pass_every_length_until_the_end_marker() {
