@@ -199,3 +199,16 @@ fn dragging_an_offset_through_history_is_one_undo_step() {
     assert_eq!(history.current().track(0).unwrap().offset_beats, 0.0);
     assert!(!history.can_undo());
 }
+
+#[test]
+fn soloing_a_band_on_one_track_does_not_silence_the_other_track() {
+    // Band solo is scoped to its own Track: each Track has its own Band states.
+    let xo = [300.0, 4_000.0];
+    let mut track_a = [open(1.0), open(1.0), open(1.0)];
+    track_a[2].solo = true; // A: only the high Band
+    let track_b = [open(1.0), open(1.0), open(1.0)]; // B: untouched
+
+    // A 100 Hz tone is in the low Band: silenced on A, fully audible on B.
+    assert!(rms_through_bands(&xo, &track_a, 100.0) < 0.01 * SINE_RMS);
+    assert!(rms_through_bands(&xo, &track_b, 100.0) > 0.97 * SINE_RMS);
+}
