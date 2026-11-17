@@ -14,7 +14,7 @@ pub struct RenderTrack<'a> {
 
 impl RenderTrack<'_> {
     /// The Track's contribution at Mashup position `pos`, fader applied.
-    fn sample_at(&self, pos: i64) -> f32 {
+    pub(crate) fn sample_at(&self, pos: i64) -> f32 {
         let fader = if self.fader.is_finite() && self.fader > 0.0 {
             self.fader
         } else {

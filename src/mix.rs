@@ -8,17 +8,21 @@ pub struct BandState {
 
 /// The gain each Band actually contributes once mute and solo are applied.
 pub fn effective_gains(bands: &[BandState]) -> Vec<f32> {
+    let mut gains = vec![0.0; bands.len()];
+    effective_gains_into(bands, &mut gains);
+    gains
+}
+
+/// Like `effective_gains`, but writes into `out` without allocating (for the audio callback).
+/// Slots beyond `bands` are set to 0.
+pub fn effective_gains_into(bands: &[BandState], out: &mut [f32]) {
     let any_solo = bands.iter().any(|b| b.solo);
-    bands
-        .iter()
-        .map(|b| {
-            if b.mute || (any_solo && !b.solo) {
-                0.0
-            } else {
-                b.gain
-            }
-        })
-        .collect()
+    for (i, slot) in out.iter_mut().enumerate() {
+        *slot = match bands.get(i) {
+            Some(b) if !b.mute && (!any_solo || b.solo) => b.gain,
+            _ => 0.0,
+        };
+    }
 }
 
 /// The Mashup limiter: output never exceeds full scale (+/-1.0), so summed Tracks cannot clip.
@@ -215,5 +219,25 @@ mod tests {
         assert_eq!(limit_stereo(f32::NAN, 0.5), (0.0, 0.5));
         assert_eq!(limit_stereo(0.5, f32::INFINITY), (0.5, 0.0));
         assert_eq!(limit_stereo(f32::NAN, f32::NAN), (0.0, 0.0));
+    }
+
+    #[test]
+    fn effective_gains_into_matches_effective_gains_without_allocating_a_vec() {
+        let bands = [
+            band(0.8, false, false),
+            band(0.5, false, true),
+            band(0.9, true, true),
+        ];
+        let mut out = [9.0f32; 3];
+        effective_gains_into(&bands, &mut out);
+        assert_eq!(out.to_vec(), effective_gains(&bands));
+        assert_eq!(out, [0.0, 0.5, 0.0]);
+    }
+
+    #[test]
+    fn effective_gains_into_zeroes_slots_beyond_the_bands() {
+        let mut out = [9.0f32; 4];
+        effective_gains_into(&[band(0.5, false, false)], &mut out);
+        assert_eq!(out, [0.5, 0.0, 0.0, 0.0]);
     }
 }

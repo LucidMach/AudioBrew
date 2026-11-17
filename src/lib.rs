@@ -1,6 +1,7 @@
 pub mod analysis;
 pub mod bands;
 pub mod crossover;
+pub mod engine;
 pub mod first_run;
 pub mod grid;
 pub mod history;
