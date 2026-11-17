@@ -19,6 +19,8 @@ pub fn compatibility(reference: Key, other: Key) -> Compatibility {
     let same_ring = reference.minor == other.minor;
     if (same_ring && steps <= 1) || (!same_ring && steps == 0) {
         Compatibility::Green
+    } else if same_ring && steps == 2 {
+        Compatibility::Amber
     } else {
         Compatibility::Red
     }
@@ -30,6 +32,18 @@ mod tests {
 
     fn key(number: u8, minor: bool) -> Key {
         Key { number, minor }
+    }
+
+    #[test]
+    fn two_steps_around_the_wheel_is_amber() {
+        // 8A to 10A is a risky but workable energy-boost mix.
+        assert_eq!(compatibility(key(8, true), key(10, true)), Compatibility::Amber);
+    }
+
+    #[test]
+    fn distant_keys_are_red() {
+        assert_eq!(compatibility(key(8, true), key(2, true)), Compatibility::Red);
+        assert_eq!(compatibility(key(8, true), key(3, false)), Compatibility::Red);
     }
 
     #[test]
