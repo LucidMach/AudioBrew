@@ -7,6 +7,8 @@ pub const MIN_LANES: usize = 2;
 /// A Track loaded into a lane, with what detection found.
 #[derive(Debug, Clone, PartialEq)]
 pub struct LoadedTrack {
+    /// The audio file this Track was loaded from; saved projects refer to it by this path.
+    pub source: String,
     pub bpm: Option<f64>,
     pub key: Option<Key>,
     /// Length in source seconds.
@@ -116,6 +118,7 @@ mod tests {
 
     fn track(bpm: Option<f64>) -> LoadedTrack {
         LoadedTrack {
+            source: "a.wav".into(),
             bpm,
             key: None,
             length_secs: 8.0,

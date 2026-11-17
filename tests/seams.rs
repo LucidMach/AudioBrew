@@ -175,6 +175,7 @@ fn dragging_an_offset_through_history_is_one_undo_step() {
         .load_track(
             0,
             LoadedTrack {
+                source: "a.wav".into(),
                 bpm: Some(120.0),
                 key: None,
                 length_secs: 8.0,
