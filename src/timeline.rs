@@ -37,6 +37,14 @@ mod tests {
     use super::*;
 
     #[test]
+    fn a_zero_length_track_never_repeats() {
+        // Guards against an infinite list of seams at the same instant.
+        let empty = Placement { length_secs: 0.0, offset_secs: 2.0 };
+
+        assert_eq!(repeat_seams_secs(empty, 10.0), Vec::<f64>::new());
+    }
+
+    #[test]
     fn dragged_end_marker_overrides_the_longest_track_default() {
         let tracks = [
             Placement { length_secs: 10.0, offset_secs: 0.0 },
