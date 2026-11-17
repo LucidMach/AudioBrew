@@ -47,6 +47,43 @@ mod tests {
     }
 
     #[test]
+    fn silence_has_no_tempo_so_the_track_is_flagged_not_guessed() {
+        let silence = Stereo { samples: vec![0.0; 2 * RATE as usize * 8], sample_rate: RATE };
+
+        let input = detect(&silence);
+
+        assert_eq!(input.bpm, None);
+        assert_eq!(input.downbeat_secs, 0.0);
+        assert!((input.length_secs - 8.0).abs() < 1e-6);
+    }
+
+    #[test]
+    fn two_dropped_files_become_a_tempo_matched_downbeat_aligned_mashup() {
+        use crate::first_run::plan_first_run;
+        use crate::grid::beats_to_secs;
+
+        // Track 1: 100 BPM, first click at 0.25 s. Track 2: 120 BPM, first click at 0.10 s.
+        let tracks = [stereo_clicks(100.0, 16.0, 0.25), stereo_clicks(120.0, 16.0, 0.10)];
+
+        let inputs: Vec<_> = tracks.iter().map(detect).collect();
+        let plan = plan_first_run(&inputs).expect("two files make a plan");
+
+        // The Mashup takes the first Track's tempo; the second slows by 100/120.
+        let mashup = plan.mashup_bpm.expect("a tempo was detected");
+        assert!((mashup - 100.0).abs() <= 1.0, "mashup bpm {mashup}");
+        assert!((plan.tracks[1].factor - 100.0 / 120.0).abs() < 0.02, "factor {}", plan.tracks[1].factor);
+        assert!(!plan.tracks[1].warn);
+
+        // After stretching and offsetting, Track 2's first click (true time 0.10 s) must land on
+        // one of Track 1's bar lines (its first click is at 0.25 s; a bar is 4 beats = 2.4 s).
+        let landed = beats_to_secs(plan.tracks[1].offset_beats, mashup)
+            + 0.10 / plan.tracks[1].factor;
+        let bar = 4.0 * 60.0 / 100.0;
+        let off = (landed - 0.25).rem_euclid(bar);
+        assert!(off.min(bar - off) <= 0.02, "downbeats are {:.0} ms apart", off.min(bar - off) * 1000.0);
+    }
+
+    #[test]
     fn detection_reports_tempo_length_and_downbeat_of_a_stereo_file() {
         let audio = stereo_clicks(120.0, 12.0, 0.25);
 
