@@ -30,6 +30,19 @@ pub fn limit(sample: f32) -> f32 {
     sample.clamp(-1.0, 1.0)
 }
 
+/// The stereo Mashup limiter. Both channels are scaled by the same amount when the louder one
+/// would pass full scale, so the stereo image does not shift. Non-finite samples become silence.
+pub fn limit_stereo(left: f32, right: f32) -> (f32, f32) {
+    let finite = |v: f32| if v.is_finite() { v } else { 0.0 };
+    let (l, r) = (finite(left), finite(right));
+    let peak = l.abs().max(r.abs());
+    if peak > 1.0 {
+        (l / peak, r / peak)
+    } else {
+        (l, r)
+    }
+}
+
 /// One Track's already-processed samples and its fader level.
 pub struct TrackSignal<'a> {
     pub fader: f32,
@@ -179,5 +192,28 @@ mod tests {
             },
         ];
         assert!(mix_down(&tracks).iter().all(|s| s.is_finite()));
+    }
+
+    #[test]
+    fn a_linked_limiter_scales_both_channels_together_to_keep_the_stereo_image() {
+        // Peak is 1.5 (left), so both are scaled by 1/1.5: 1.5 -> 1.0 and 0.75 -> 0.5.
+        let (l, r) = limit_stereo(1.5, 0.75);
+        assert!((l - 1.0).abs() < 1e-6 && (r - 0.5).abs() < 1e-6, "{l} {r}");
+        let (l, r) = limit_stereo(-0.5, -2.0);
+        assert!((l + 0.25).abs() < 1e-6 && (r + 1.0).abs() < 1e-6, "{l} {r}");
+    }
+
+    #[test]
+    fn a_linked_limiter_leaves_signals_inside_full_scale_alone() {
+        assert_eq!(limit_stereo(0.5, -0.75), (0.5, -0.75));
+        assert_eq!(limit_stereo(1.0, -1.0), (1.0, -1.0));
+        assert_eq!(limit_stereo(0.0, 0.0), (0.0, 0.0));
+    }
+
+    #[test]
+    fn a_linked_limiter_never_passes_non_finite_samples() {
+        assert_eq!(limit_stereo(f32::NAN, 0.5), (0.0, 0.5));
+        assert_eq!(limit_stereo(0.5, f32::INFINITY), (0.5, 0.0));
+        assert_eq!(limit_stereo(f32::NAN, f32::NAN), (0.0, 0.0));
     }
 }

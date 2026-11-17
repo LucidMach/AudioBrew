@@ -1,4 +1,4 @@
-use crate::mix::limit;
+use crate::mix::{limit, limit_stereo};
 
 /// One Track as the audio callback sees it: already stretched to the Mashup BPM,
 /// with its Loop applied. Positions are sample frames on the Mashup timeline.
@@ -91,6 +91,61 @@ pub fn render_mashup(tracks: &[RenderTrack], end: i64, audition: Option<usize>) 
     let mut out = vec![0.0; end.max(0) as usize];
     mix_into(&mut out, 0, end, tracks, audition);
     out
+}
+
+/// One stereo Track as the audio callback sees it: planar, already stretched to the Mashup
+/// BPM. Left and right share one Offset, repeat flag and fader.
+#[derive(Debug, Clone, Copy)]
+pub struct StereoTrack<'a> {
+    pub left: &'a [f32],
+    pub right: &'a [f32],
+    pub offset: i64,
+    pub repeats: bool,
+    pub fader: f32,
+}
+
+/// One stereo audio-callback block starting at Playhead frame `start`: every audible Track
+/// summed per channel, silent from the End marker on (or wrapped to frame 0 when `looping`),
+/// then limited with linked channels. `audition: Some(i)` plays only Track `i`. Does not
+/// allocate. If the output slices differ in length, the shorter one sets the block size.
+pub fn mix_block_stereo(
+    out_left: &mut [f32],
+    out_right: &mut [f32],
+    start: i64,
+    end: i64,
+    looping: bool,
+    tracks: &[StereoTrack],
+    audition: Option<usize>,
+) {
+    let frames = out_left.len().min(out_right.len());
+    for i in 0..frames {
+        let raw = start.saturating_add(i as i64);
+        let pos = if looping && end > 0 {
+            raw.rem_euclid(end)
+        } else {
+            raw
+        };
+        if pos < 0 || pos >= end {
+            out_left[i] = 0.0;
+            out_right[i] = 0.0;
+            continue;
+        }
+        let (mut l, mut r) = (0.0f32, 0.0f32);
+        for (n, t) in tracks.iter().enumerate() {
+            if audition.is_some_and(|solo| solo != n) {
+                continue;
+            }
+            let channel = |samples| RenderTrack {
+                samples,
+                offset: t.offset,
+                repeats: t.repeats,
+                fader: t.fader,
+            };
+            l += channel(t.left).sample_at(pos);
+            r += channel(t.right).sample_at(pos);
+        }
+        (out_left[i], out_right[i]) = limit_stereo(l, r);
+    }
 }
 
 #[cfg(test)]
@@ -284,5 +339,133 @@ mod tests {
                 .iter()
                 .all(|v| v.is_finite())
         );
+    }
+
+    fn stereo<'a>(
+        left: &'a [f32],
+        right: &'a [f32],
+        offset: i64,
+        repeats: bool,
+    ) -> StereoTrack<'a> {
+        StereoTrack {
+            left,
+            right,
+            offset,
+            repeats,
+            fader: 1.0,
+        }
+    }
+
+    fn render_stereo(
+        tracks: &[StereoTrack],
+        end: i64,
+        looping: bool,
+        audition: Option<usize>,
+    ) -> (Vec<f32>, Vec<f32>) {
+        let n = end.max(0) as usize;
+        let (mut l, mut r) = (vec![9.0; n], vec![9.0; n]);
+        mix_block_stereo(&mut l, &mut r, 0, end, looping, tracks, audition);
+        (l, r)
+    }
+
+    #[test]
+    fn stereo_channels_stay_independent() {
+        let (l, r) = ([0.5, 0.25], [-0.25, 0.125]);
+        let (out_l, out_r) = render_stereo(&[stereo(&l, &r, 0, false)], 2, false, None);
+        assert_eq!(out_l, vec![0.5, 0.25]);
+        assert_eq!(out_r, vec![-0.25, 0.125]);
+    }
+
+    #[test]
+    fn stereo_offset_repeat_and_end_marker_match_the_mono_rules_on_each_channel() {
+        let (l, r) = ([A, B, C], [C, B, A]);
+        let (out_l, out_r) = render_stereo(&[stereo(&l, &r, 2, true)], 10, false, None);
+        assert_eq!(out_l, vec![0.0, 0.0, A, B, C, A, B, C, A, B]);
+        assert_eq!(out_r, vec![0.0, 0.0, C, B, A, C, B, A, C, B]);
+    }
+
+    #[test]
+    fn stereo_tracks_sum_per_channel_after_their_faders() {
+        let (xl, xr) = ([0.5], [0.25]);
+        let (yl, yr) = ([0.25], [0.5]);
+        let tracks = [
+            stereo(&xl, &xr, 0, false),
+            StereoTrack {
+                fader: 0.5,
+                ..stereo(&yl, &yr, 0, false)
+            },
+        ];
+        let (l, r) = render_stereo(&tracks, 1, false, None);
+        assert_eq!((l[0], r[0]), (0.625, 0.5));
+    }
+
+    #[test]
+    fn the_stereo_mashup_is_limited_with_linked_channels() {
+        // Sum is (1.5, 0.75): both scaled by 1/1.5 -> (1.0, 0.5), not (1.0, 0.75).
+        let (xl, xr) = ([0.75], [0.25]);
+        let (yl, yr) = ([0.75], [0.5]);
+        let tracks = [stereo(&xl, &xr, 0, false), stereo(&yl, &yr, 0, false)];
+        let (l, r) = render_stereo(&tracks, 1, false, None);
+        assert!(
+            (l[0] - 1.0).abs() < 1e-6 && (r[0] - 0.5).abs() < 1e-6,
+            "{} {}",
+            l[0],
+            r[0]
+        );
+    }
+
+    #[test]
+    fn stereo_solo_audition_plays_only_that_track() {
+        let (xl, xr) = ([0.5, 0.5], [0.1, 0.1]);
+        let (yl, yr) = ([0.25], [0.05]);
+        let tracks = [stereo(&xl, &xr, 0, false), stereo(&yl, &yr, 1, false)];
+        let (l, r) = render_stereo(&tracks, 2, false, Some(1));
+        assert_eq!(l, vec![0.0, 0.25]);
+        assert_eq!(r, vec![0.0, 0.05]);
+        assert_eq!(render_stereo(&tracks, 2, false, Some(7)).0, vec![0.0, 0.0]);
+    }
+
+    #[test]
+    fn a_stereo_loop_wraps_across_blocks_without_a_gap() {
+        let ramp: Vec<f32> = (0..10).map(|n| n as f32 * 0.1).collect();
+        let neg: Vec<f32> = ramp.iter().map(|v| -v).collect();
+        let tracks = [stereo(&ramp, &neg, 0, false)];
+        let mut heard = Vec::new();
+        for block in 0..7i64 {
+            let (mut l, mut r) = ([9.0f32; 4], [9.0f32; 4]);
+            mix_block_stereo(&mut l, &mut r, (block * 4) % 10, 10, true, &tracks, None);
+            heard.extend(l.iter().zip(&r).map(|(a, b)| (*a, *b)));
+        }
+        for (n, (l, r)) in heard.iter().enumerate() {
+            let want = (n % 10) as f32 * 0.1;
+            assert!(
+                (l - want).abs() < 1e-6 && (r + want).abs() < 1e-6,
+                "frame {n}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_stereo_block_past_the_end_marker_without_looping_is_silent() {
+        let (l, r) = ([A], [A]);
+        let mut out_l = [9.0; 3];
+        let mut out_r = [9.0; 3];
+        mix_block_stereo(
+            &mut out_l,
+            &mut out_r,
+            5,
+            4,
+            false,
+            &[stereo(&l, &r, 0, true)],
+            None,
+        );
+        assert_eq!((out_l, out_r), ([0.0; 3], [0.0; 3]));
+    }
+
+    #[test]
+    fn non_finite_stereo_source_samples_never_reach_the_output() {
+        let (l, r) = ([f32::NAN, A], [A, f32::INFINITY]);
+        let (out_l, out_r) = render_stereo(&[stereo(&l, &r, 0, true)], 6, false, None);
+        assert!(out_l.iter().chain(&out_r).all(|v| v.is_finite()));
     }
 }
