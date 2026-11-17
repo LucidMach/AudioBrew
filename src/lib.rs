@@ -1,4 +1,5 @@
 pub mod analysis;
+pub mod badge;
 pub mod bands;
 pub mod crossover;
 pub mod detect;
