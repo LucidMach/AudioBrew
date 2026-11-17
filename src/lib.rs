@@ -14,6 +14,7 @@ pub mod key;
 pub mod lane_view;
 pub mod keydetect;
 pub mod load;
+pub mod mashup_preview;
 pub mod mix;
 pub mod pipeline;
 pub mod project;
