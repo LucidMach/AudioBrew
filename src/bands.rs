@@ -56,6 +56,11 @@ impl BandConfig {
         Ok(())
     }
 
+    /// The crossover frequencies, lowest first.
+    pub fn crossovers(&self) -> &[f64] {
+        &self.crossovers
+    }
+
     /// Each Band as `(low_hz, high_hz)`, lowest first.
     pub fn ranges(&self) -> Vec<(f64, f64)> {
         let edges = std::iter::once(MIN_HZ)
