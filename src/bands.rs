@@ -35,6 +35,9 @@ impl BandConfig {
     /// Moves the boundary between Band `index` and Band `index + 1`.
     /// It may not cross a neighbouring boundary or leave the audible range.
     pub fn move_crossover(&mut self, index: usize, hz: f64) -> Result<(), BandError> {
+        if index >= self.crossovers.len() {
+            return Err(BandError::InvalidCrossover);
+        }
         let lower = if index == 0 { MIN_HZ } else { self.crossovers[index - 1] };
         let upper = self.crossovers.get(index + 1).copied().unwrap_or(MAX_HZ);
         if hz <= lower || hz >= upper {
@@ -96,6 +99,13 @@ mod tests {
             bands.ranges(),
             vec![(20.0, 300.0), (300.0, 4_000.0), (4_000.0, 20_000.0)]
         );
+    }
+
+    #[test]
+    fn moving_a_crossover_that_does_not_exist_is_an_error_not_a_panic() {
+        let mut bands = BandConfig::default(); // 3 Bands, so crossovers 0 and 1 only
+
+        assert_eq!(bands.move_crossover(2, 5_000.0), Err(BandError::InvalidCrossover));
     }
 
     #[test]
