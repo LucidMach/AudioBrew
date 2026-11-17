@@ -27,6 +27,9 @@ impl BandConfig {
         if self.crossovers.len() + 1 >= MAX_BANDS {
             return Err(BandError::TooManyBands);
         }
+        if hz <= MIN_HZ || hz >= MAX_HZ || self.crossovers.contains(&hz) {
+            return Err(BandError::InvalidCrossover);
+        }
         let at = self.crossovers.partition_point(|&c| c < hz);
         self.crossovers.insert(at, hz);
         Ok(())
@@ -106,6 +109,16 @@ mod tests {
         let mut bands = BandConfig::default(); // 3 Bands, so crossovers 0 and 1 only
 
         assert_eq!(bands.move_crossover(2, 5_000.0), Err(BandError::InvalidCrossover));
+    }
+
+    #[test]
+    fn a_band_cannot_be_added_outside_the_audible_range_or_on_an_existing_crossover() {
+        let mut bands = BandConfig::default();
+
+        assert_eq!(bands.add_band(10.0), Err(BandError::InvalidCrossover));
+        assert_eq!(bands.add_band(25_000.0), Err(BandError::InvalidCrossover));
+        assert_eq!(bands.add_band(300.0), Err(BandError::InvalidCrossover));
+        assert_eq!(bands.ranges().len(), 3);
     }
 
     #[test]
