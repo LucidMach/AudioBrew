@@ -6,6 +6,7 @@ use std::sync::Arc;
 use std::sync::mpsc::{self, Receiver, Sender};
 
 use crate::pipeline::{Executor, Loader};
+use crate::load::{DroppedFile, plan_drop};
 use crate::project::{LaneId, LoadedTrack, Project, ProjectError};
 
 /// A file that has been loaded and analysed, ready to be placed in a lane.
@@ -65,6 +66,44 @@ pub fn place_tracks(
     Ok(())
 }
 
+
+/// Whether a path looks like an audio file we can decode, judged by its extension.
+pub fn is_audio_path(path: &std::path::Path) -> bool {
+    const AUDIO: [&str; 9] = ["wav", "mp3", "flac", "ogg", "oga", "m4a", "aac", "aiff", "aif"];
+    path.extension()
+        .and_then(|e| e.to_str())
+        .is_some_and(|e| AUDIO.iter().any(|a| a.eq_ignore_ascii_case(e)))
+}
+
+/// Decides which lane each dropped file goes to, adding lanes to `project` when there are more
+/// audio files than lanes. `target` is the lane the files were dropped on, if any. Returns the
+/// (lane, path) pairs to analyse; non-audio files are skipped.
+pub fn assign_dropped_paths(
+    project: &mut Project,
+    paths: &[std::path::PathBuf],
+    target: Option<usize>,
+) -> Vec<(LaneId, String)> {
+    let files: Vec<DroppedFile> = paths
+        .iter()
+        .map(|p| DroppedFile { is_audio: is_audio_path(p) })
+        .collect();
+    let occupied: Vec<bool> = (0..project.lane_count())
+        .map(|lane| project.track(lane).is_some())
+        .collect();
+    let plan = plan_drop(&files, &occupied, target);
+
+    if let Some(last) = plan.iter().map(|a| a.lane).max() {
+        while project.lane_count() <= last {
+            project.add_lane();
+        }
+    }
+    plan.iter()
+        .filter_map(|a| {
+            let lane = project.lane_id(a.lane)?;
+            Some((lane, paths[a.file].to_string_lossy().into_owned()))
+        })
+        .collect()
+}
 
 /// What a `poll` changed.
 #[derive(Debug, Default, PartialEq)]
@@ -441,6 +480,73 @@ mod tests {
 
         assert_eq!(ingest.poll(&mut project), IngestReport::default());
         assert!(ingest.batches.is_empty() && ingest.newest.is_empty());
+    }
+
+    #[test]
+    fn audio_files_are_recognised_by_extension_ignoring_case() {
+        use std::path::Path;
+        for ok in ["a.wav", "B.MP3", "/x/y/c.flac", "d.ogg", "e.m4a", "f.aac", "g.aiff"] {
+            assert!(is_audio_path(Path::new(ok)), "{ok}");
+        }
+        for no in ["notes.txt", "cover.png", "noextension", "archive.zip", ".wav.bak"] {
+            assert!(!is_audio_path(Path::new(no)), "{no}");
+        }
+    }
+
+    #[test]
+    fn two_dropped_files_fill_the_two_empty_lanes_in_order() {
+        use std::path::PathBuf;
+        let mut project = Project::new();
+        let (l0, l1) = (project.lane_id(0).unwrap(), project.lane_id(1).unwrap());
+
+        let jobs = assign_dropped_paths(
+            &mut project,
+            &[PathBuf::from("/m/a.wav"), PathBuf::from("/m/b.mp3")],
+            None,
+        );
+
+        assert_eq!(jobs, vec![(l0, "/m/a.wav".to_string()), (l1, "/m/b.mp3".to_string())]);
+        assert_eq!(project.lane_count(), 2);
+    }
+
+    #[test]
+    fn more_files_than_lanes_adds_lanes() {
+        use std::path::PathBuf;
+        let mut project = Project::new();
+        let paths: Vec<PathBuf> = ["a.wav", "b.wav", "c.wav"].iter().map(PathBuf::from).collect();
+
+        let jobs = assign_dropped_paths(&mut project, &paths, None);
+
+        assert_eq!(project.lane_count(), 3);
+        assert_eq!(jobs.len(), 3);
+        assert_eq!(jobs[2], (project.lane_id(2).unwrap(), "c.wav".to_string()));
+    }
+
+    #[test]
+    fn files_that_are_not_audio_are_skipped_without_using_a_lane() {
+        use std::path::PathBuf;
+        let mut project = Project::new();
+        let l0 = project.lane_id(0).unwrap();
+
+        let jobs = assign_dropped_paths(
+            &mut project,
+            &[PathBuf::from("readme.txt"), PathBuf::from("song.wav")],
+            None,
+        );
+
+        assert_eq!(jobs, vec![(l0, "song.wav".to_string())]);
+        assert_eq!(assign_dropped_paths(&mut project, &[PathBuf::from("x.txt")], None), vec![]);
+    }
+
+    #[test]
+    fn a_file_dropped_on_a_lane_goes_to_that_lane() {
+        use std::path::PathBuf;
+        let mut project = Project::new();
+        let l1 = project.lane_id(1).unwrap();
+
+        let jobs = assign_dropped_paths(&mut project, &[PathBuf::from("a.wav")], Some(1));
+
+        assert_eq!(jobs, vec![(l1, "a.wav".to_string())]);
     }
 
     #[test]
