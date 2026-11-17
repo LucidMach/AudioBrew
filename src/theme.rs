@@ -40,6 +40,15 @@ const CLIP_PALETTE: [ClipColors; 4] = [
     ClipColors { body: Rgb(226, 215, 244), wave: Rgb(106, 58, 171), tag: Rgb(106, 58, 171), tag_text: WHITE },
     ClipColors { body: Rgb(200, 233, 232), wave: Rgb(13, 115, 119), tag: Rgb(13, 115, 119), tag_text: WHITE },
 ];
+/// Light tints for the six possible Bands (amber, blue, rose, green, purple, teal).
+const BAND_TINTS: [Rgb; 6] = [
+    Rgb(251, 227, 176),
+    Rgb(207, 224, 246),
+    Rgb(244, 211, 218),
+    Rgb(205, 231, 214),
+    Rgb(226, 215, 244),
+    Rgb(200, 233, 232),
+];
 const BUS_COLORS: ClipColors =
     ClipColors { body: Rgb(246, 222, 191), wave: Rgb(178, 85, 26), tag: Rgb(166, 77, 20), tag_text: WHITE };
 
@@ -132,6 +141,11 @@ impl Theme {
     /// The colours for lane `lane`'s clip; the palette cycles after four lanes.
     pub fn clip_colors(&self, lane: usize) -> ClipColors {
         CLIP_PALETTE[lane % CLIP_PALETTE.len()]
+    }
+
+    /// The zone tint for Band `index` in the Bands graph, wrapping after six.
+    pub fn band_tint(&self, index: usize) -> Rgb {
+        BAND_TINTS[index % BAND_TINTS.len()]
     }
 
     /// The Mashup bus lane's colours.
@@ -292,6 +306,20 @@ mod tests {
         }
         for bg in [t.content, t.panel] {
             assert!(contrast_ratio(t.selection, bg) >= 1.8, "selection outline is a highlight, not text");
+        }
+    }
+
+    #[test]
+    fn band_tints_are_distinct_and_carry_a_label_in_both_themes() {
+        for theme in [Theme::standard(), Theme::high_contrast()] {
+            let tints: Vec<Rgb> = (0..6).map(|i| theme.band_tint(i)).collect();
+            for (i, a) in tints.iter().enumerate() {
+                assert!(contrast_ratio(theme.text, *a) >= 4.5, "label on Band {i}");
+                for b in &tints[i + 1..] {
+                    assert_ne!(a, b, "two Bands share a tint");
+                }
+            }
+            assert_eq!(theme.band_tint(6), theme.band_tint(0), "the tints wrap after six");
         }
     }
 
